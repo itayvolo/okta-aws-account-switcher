@@ -346,13 +346,20 @@ function aws_login(callback) {
 }
 
 function okta_login(callback, callback_argument = null) {
-    chrome.storage.local.get(["settings"], function(storage){
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Connecting to Okta..."}});
-        safeSendMessage({"method": "UpdateLoginStatus"});
+    // Store current active tab to return to later
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+        const originalTab = tabs[0];
+        chrome.storage.local.set({"originalTab": {id: originalTab.id, url: originalTab.url}});
         
-        // Clear any existing badge
-        chrome.action.setBadgeText({text: ""});
-        if (storage.settings == undefined) {
+        chrome.storage.local.get(["settings"], function(storage){
+            chrome.storage.local.set({"login_status": {"status": "progress", "message": "Starting seamless login..."}});
+            safeSendMessage({"method": "UpdateLoginStatus"});
+            
+            // Set badge to show login in progress
+            chrome.action.setBadgeText({text: "..."});
+            chrome.action.setBadgeBackgroundColor({color: "#2196F3"});
+            
+            if (storage.settings == undefined) {
             chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! No settings found"}});
             safeSendMessage({"method": "UpdateLoginStatus"});
             return;
@@ -396,6 +403,7 @@ function okta_login(callback, callback_argument = null) {
                     waitForOAuth2LoginFields(tab.id, callback, callback_argument, username, password);
                 });
             }
+        });
         });
     });
 }
@@ -1309,9 +1317,23 @@ function monitorOktaLogin(tabId, callback, callback_argument) {
                 chrome.action.setBadgeText({text: "✓"});
                 chrome.action.setBadgeBackgroundColor({color: "#4CAF50"});
                 
+                // Show success notification
+                chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: 'Icons/icon_48.png',
+                    title: 'AWS Account Switcher',
+                    message: 'Login successful! Applications loading...'
+                });
+                
+                // Original tab return is handled by credential injection logic
+                
                 // Load apps directly from current dashboard page
                 chrome.storage.local.get(["settings"], function(storage){
                     if (storage.settings && storage.settings.okta_domain) {
+                        // Update badge to show apps loading
+                        chrome.action.setBadgeText({text: "📱"});
+                        chrome.action.setBadgeBackgroundColor({color: "#9C27B0"});
+                        
                         const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
                         makeOktaApiCall(tabId, list_apps_url, true);
                     } else {
@@ -1416,13 +1438,16 @@ function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, 
         return;
     }
     
-    // Make tab active so login form loads properly
+    // Make tab active briefly so login form loads properly
     chrome.tabs.update(tabId, { active: true }, function() {
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Activating tab and waiting for login form to load..."}});
+        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Loading login form..."}});
         safeSendMessage({"method": "UpdateLoginStatus"});
+        
+        // Tab will return to original after login fields are found and injected
     });
     
     let monitorCount = 0;
+    let hasReturnedToOriginalTab = false; // Flag to prevent multiple tab switches
     
     // Give the page 2 seconds to detect tab activation and load forms
     setTimeout(() => {
@@ -1605,6 +1630,22 @@ function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, 
                 
                 chrome.storage.local.set({"login_status": {"status": "progress", "message": "Auto-filling login credentials..."}});
                 safeSendMessage({"method": "UpdateLoginStatus"});
+                
+                // Update badge to show credentials being filled
+                chrome.action.setBadgeText({text: "📝"});
+                chrome.action.setBadgeBackgroundColor({color: "#FF9800"});
+                
+                // Return to original tab now that we found the form and are injecting (only once)
+                if (!hasReturnedToOriginalTab) {
+                    hasReturnedToOriginalTab = true;
+                    chrome.storage.local.get(["originalTab"], function(result) {
+                        if (result.originalTab && result.originalTab.id) {
+                            chrome.tabs.update(result.originalTab.id, { active: true }).catch(() => {
+                                // Original tab may have been closed, that's OK
+                            });
+                        }
+                    });
+                }
                 
                 // Inject credentials
                 chrome.scripting.executeScript({
@@ -1995,9 +2036,18 @@ function makeOktaApiCall(tabId, apiUrl, closeTab = false, callback = null, retry
             }
             
             if (result.success) {
-                console.log("Successfully retrieved Okta applications");
                 chrome.storage.local.set({"okta_apps_status": {"status": "success", "apps": result.data}});
                 safeSendMessage({"method": "UpdateOktaApps"});
+                
+                // Final success notification with app count
+                const appCount = result.data.reduce((total, tab) => total + (tab._embedded?.items?.length || 0), 0);
+                chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: 'Icons/icon_48.png',
+                    title: 'AWS Account Switcher',
+                    message: `Ready! Loaded ${appCount} applications.`
+                });
+                
                 if (callback) callback(true);
             } else {
                 let message = result.status === 403 ? 
