@@ -76,6 +76,8 @@ function load_popup() {
 
     load_aws_accounts();
     load_okta_aws_app();
+    // Load current login status on popup open
+    update_login_status();
     // Don't auto-load okta apps - user can click refresh button when needed
     // Hide okta apps loading by default
     const oktaLoadElement = document.getElementById("okta_apps_load");
@@ -462,6 +464,20 @@ function update_role_filters() {
 }
 
 function okta_login() {
+    // Show immediate feedback before starting login process
+    const status_div = document.getElementById("login_status_div");
+    const status_span = document.getElementById("login_status");
+    const login_button = document.querySelector("button#okta_login");
+    const login_button_span = login_button.querySelector("span");
+    
+    // Set loading state immediately
+    status_div.style.display = "block";
+    status_span.innerText = "Starting login process... (popup may close during login)";
+    status_span.className = "";
+    login_button_span.innerText = "";
+    login_button_span.className = "fas fa-spinner loading-spinner";
+    login_button.disabled = true;
+    
     // The loading animation will be handled by update_login_status() 
     // when the background script updates the login status
     chrome.runtime.sendMessage({"method": "loginOkta"});
@@ -492,6 +508,11 @@ function update_login_status() {
             
             // Add fade-in animation to success message
             status_span.classList.add('fade-in');
+            
+            // Automatically load Okta applications after successful login
+            setTimeout(() => {
+                load_okta_apps();
+            }, 1000);
         }
         else if (storage.login_status.status == "progress") {
             status_span.className = "";

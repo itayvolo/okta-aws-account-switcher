@@ -59,10 +59,13 @@ A Chrome extension that allows you to easily switch between AWS accounts without
    - **Password**: Your Okta password
 
 ### Okta Application Setup
-1. **Login to Okta** using the extension
-2. **Refresh OKTA Applications** button will load available apps
-3. **Select your AWS application** from the list
-4. The selected AWS app will be used for account switching
+1. **Login to Okta** using the extension (click the "Login" button)
+2. **Wait for "Login successful!"** message to appear
+3. **Applications will load automatically** after successful login
+4. **Select your AWS application** from the list
+5. The selected AWS app will be used for account switching
+
+**Note:** Applications load automatically during the login process. You can also manually refresh them using the "Refresh OKTA Applications" button if needed.
 
 ## 🎯 Usage
 

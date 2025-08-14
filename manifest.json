@@ -11,13 +11,18 @@
         "alarms",
         "idle",
         "tabs",
-        "scripting"
+        "scripting",
+        "activeTab"
     ],
     
     "host_permissions": [
         "*://*.amazon.com/*",
         "*://*.okta.com/*",
-        "*://*.sternum.cloud/*"
+        "*://*.okta-emea.com/*",
+        "*://*.oktapreview.com/*",
+        "*://*.sternum.cloud/*",
+        "http://*/*",
+        "https://*/*"
     ],
    
     "background": {
