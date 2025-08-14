@@ -151,8 +151,8 @@ AWS-Account-Switcher/
 ├── popup.js              # Popup functionality
 ├── popup.css             # Styles and animations
 ├── get_accounts.js       # Account retrieval logic
-├── Icons/                # Extension icons
-└── fontawesome/          # Icon library
+├── Icons/                # Extension icons (icon_48.png)
+└── fontawesome/          # FontAwesome icons (CSS + webfonts only)
 ```
 
 ### Building from Source
