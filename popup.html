@@ -7,11 +7,17 @@
   <body>
     <script src="popup.js"></script>
     <header>
-      <div id="version-info" style="position: absolute; top: 2px; right: 8px; font-size: 10px; color: #888; z-index: 10;">v5.1.0</div>
+      <div id="version-info" style="position: absolute; top: 6px; right: 12px; font-size: 11px; color: var(--text-secondary); z-index: 10; font-weight: 500;">v5.1.0</div>
     </header>
     <div class="tab">
-      <button class="tablinks fas fa-list-ul" id="accounts_tab"/>
-      <button class="tablinks fas fa-cog" id="settings_tab"/>
+      <button class="tablinks" id="accounts_tab">
+        <i class="fas fa-list-ul"></i>
+        <span>Accounts</span>
+      </button>
+      <button class="tablinks" id="settings_tab">
+        <i class="fas fa-cog"></i>
+        <span>Settings</span>
+      </button>
     </div>
     <div id="accounts_tab" class="tabcontent">
       <div id="accounts_load">
@@ -40,12 +46,6 @@
       </div>
       <div class="login_status" id="login_status_div">
         <span id="login_status">login status</span>
-      </div>
-      <span class="setting_name">AWS role filters</span>
-      <div id="role_filters_list">
-      </div>
-      <div class="add_role">
-        <button id="add_role_filter" class="fas fa-plus-circle fa-2x"></button>
       </div>
       <div id="aws_app">
         <span class="setting_name">OKTA AWS Application</span>

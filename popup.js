@@ -1,5 +1,52 @@
 window.addEventListener("load", load_popup);
 
+// Helper function to wake up service worker
+function wakeUpServiceWorker() {
+    return new Promise((resolve) => {
+        // Try to wake up the service worker by accessing extension APIs
+        chrome.storage.local.get(['_keepalive'], () => {
+            if (chrome.runtime.lastError) {
+                console.log('Service worker wake attempt:', chrome.runtime.lastError);
+            }
+            resolve();
+        });
+    });
+}
+
+// Helper function to send messages with error handling
+function safeSendMessage(message, retries = 3) {
+    console.log('Attempting to send message:', message, 'Retries left:', retries);
+    
+    return new Promise(async (resolve, reject) => {
+        // First, try to wake up the service worker
+        await wakeUpServiceWorker();
+        
+        try {
+            const response = await chrome.runtime.sendMessage(message);
+            console.log('Message sent successfully:', message.method);
+            resolve(response);
+        } catch (error) {
+            console.error('Error sending message:', message, error);
+            
+            if (error.message.includes('Could not establish connection') && retries > 0) {
+                console.log(`Retrying message after service worker wake up... (${retries} retries left)`);
+                // Wait longer and try to wake up service worker again
+                setTimeout(async () => {
+                    await wakeUpServiceWorker();
+                    try {
+                        const response = await safeSendMessage(message, retries - 1);
+                        resolve(response);
+                    } catch (retryError) {
+                        reject(retryError);
+                    }
+                }, 500);
+            } else {
+                reject(error);
+            }
+        }
+    });
+}
+
 // Add keyboard shortcuts
 document.addEventListener('keydown', function(event) {
     // Ctrl/Cmd + R to refresh accounts
@@ -23,19 +70,38 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
+// Close menus when clicking outside
+document.addEventListener('click', function(event) {
+    const isMenuButton = event.target.closest('.menu_drop_btn');
+    const isMenuContent = event.target.closest('.drop_content');
+    const isMenuIcon = event.target.classList.contains('fa-ellipsis-v');
+    
+    if (!isMenuButton && !isMenuContent && !isMenuIcon) {
+        closeAllMenus();
+    }
+});
+
 function closeAllMenus() {
     const dropContents = document.querySelectorAll('.drop_content');
     dropContents.forEach(drop => {
-        drop.style.left = '370px';
+        drop.classList.remove('show');
     });
 }
 
-function load_popup() {
+async function load_popup() {
+    // Test service worker connection on startup
+    console.log('Testing service worker connection...');
+    try {
+        await wakeUpServiceWorker();
+        console.log('Service worker connection established');
+    } catch (error) {
+        console.error('Service worker connection failed:', error);
+    }
+    
     document.getElementById('get_accounts').addEventListener("click", get_all_accounts);
     document.getElementById('delete_accounts').addEventListener("click", delete_all_accounts);
     document.getElementById('okta_login').addEventListener("click", okta_login);
     document.getElementById('okta_apps_refresh').addEventListener("click", load_okta_apps);
-    document.getElementById('add_role_filter').addEventListener("click", add_aws_role_filter);
     document.getElementById('refresh-button').addEventListener("click", refreshExtension);
 
 
@@ -66,11 +132,6 @@ function load_popup() {
         } 
         if (result.settings.okta_password != undefined) {
             document.getElementById("okta_password").value = result.settings.okta_password;
-        }
-        if (result.settings.role_filters != undefined && result.settings.role_filters.length != 0) {
-            result.settings.role_filters.forEach(filter =>{
-                add_aws_role_filter(filter);
-            });
         }
     });
 
@@ -109,14 +170,22 @@ function load_aws_accounts() {
                 var row_div = document.createElement('div');
                 row_div.classList.add("row");
 
+                // Create menu button container with dropdown (on the left)
+                var menu_container = document.createElement('div');
+                menu_container.style.position = 'relative';
+                menu_container.style.display = 'flex';
+                menu_container.style.alignItems = 'center';
+                row_div.appendChild(menu_container);
+                
                 var menu_open_btn = document.createElement('div');
-                menu_open_btn.id = "open_menu";
                 menu_open_btn.classList.add("menu_drop_btn");
-                menu_open_btn.classList.add("fa");               
-                menu_open_btn.classList.add("fa-ellipsis-v");               
-                menu_open_btn.classList.add("fa-2x");
                 menu_open_btn.addEventListener("click", toggle_menu);
-                row_div.appendChild(menu_open_btn);
+                menu_container.appendChild(menu_open_btn);
+                
+                // Add the three dots icon
+                var menu_icon = document.createElement('i');
+                menu_icon.classList.add("fas", "fa-ellipsis-v");
+                menu_open_btn.appendChild(menu_icon);
 
                 var account_div = document.createElement('div');
                 account_div.classList.add("account");
@@ -150,45 +219,43 @@ function load_aws_accounts() {
                 account_id_div.innerText = items[allKeys[i]].id;
                 info_div.appendChild(account_id_div);
 
+                // Create modern dropdown menu
                 var drop_content = document.createElement('div');
-                drop_content.classList.add("drop_content");  
-                row_div.appendChild(drop_content);
-                var menu_close_btn = document.createElement('div');
-                menu_close_btn.id = "close_menu";
-                menu_close_btn.classList.add('menu_drop_btn');
-                menu_close_btn.classList.add('fas');
-                menu_close_btn.classList.add('fa-chevron-right');
-                menu_close_btn.classList.add('fa-2x');
-                menu_close_btn.addEventListener("click", toggle_menu)
-                drop_content.appendChild(menu_close_btn);
+                drop_content.classList.add("drop_content");
+                menu_container.appendChild(drop_content);
+                
                 var menu_options = document.createElement('div');
                 menu_options.classList.add("menu_options");
                 drop_content.appendChild(menu_options);
+                
+                // Delete option (always present)
                 var delete_menu_option = document.createElement('div');
-                delete_menu_option.classList.add("menu_option");
+                delete_menu_option.classList.add("menu_option", "delete-option");
                 delete_menu_option.addEventListener("click", delete_account);
                 menu_options.appendChild(delete_menu_option);
-                var delete_menu_icon = document.createElement('div');
-                delete_menu_icon.classList.add("fa");
-                delete_menu_icon.classList.add("fa-trash-alt");
+                
+                var delete_menu_icon = document.createElement('i');
+                delete_menu_icon.classList.add("fa", "fa-trash-alt");
                 delete_menu_option.appendChild(delete_menu_icon);
-                var delete_menu_text = document.createElement('div');
+                
+                var delete_menu_text = document.createElement('span');
                 delete_menu_text.classList.add("option_text");
                 delete_menu_text.innerText = "Delete";
                 delete_menu_option.appendChild(delete_menu_text);
                 
-                
+                // Expire option (only for ready accounts)
                 if (status == "ready") {
                     status_div.classList.add("green");
                     var expire_menu_option = document.createElement('div');
-                    expire_menu_option.classList.add("menu_option");
+                    expire_menu_option.classList.add("menu_option", "expire-option");
                     expire_menu_option.addEventListener("click", expire_account);
                     menu_options.appendChild(expire_menu_option);
-                    var expire_menu_icon = document.createElement('div');
-                    expire_menu_icon.classList.add("fa");
-                    expire_menu_icon.classList.add("fa-clock");
+                    
+                    var expire_menu_icon = document.createElement('i');
+                    expire_menu_icon.classList.add("fa", "fa-clock");
                     expire_menu_option.appendChild(expire_menu_icon);
-                    var expire_menu_text = document.createElement('div');
+                    
+                    var expire_menu_text = document.createElement('span');
                     expire_menu_text.classList.add("option_text");
                     expire_menu_text.innerText = "Expire";
                     expire_menu_option.appendChild(expire_menu_text);
@@ -260,7 +327,7 @@ function load_okta_apps() {
             return
         }
         // Request background script to load apps
-        chrome.runtime.sendMessage({"method": "loadOktaApps"});
+        safeSendMessage({"method": "loadOktaApps"});
         
         var okta_apps_div = document.querySelector("div.apps_list");
         okta_apps_div.innerHTML = '';
@@ -300,43 +367,70 @@ function clear_aws_app() {
 }
 
 function account_change(e) {
+    // Don't trigger if clicking on menu button or dropdown
+    if (e.target.closest('.menu_drop_btn') || e.target.closest('.drop_content')) {
+        console.log('Ignoring click on menu element');
+        return;
+    }
+    
     var target = e.currentTarget;
     var account = target.id;
-    chrome.runtime.sendMessage({"method": "changeAccount", "account": account});
-    var account_divs = document.querySelectorAll('div.account');
-    for (i=0; i<account_divs.length; i++) {
-        account_divs[i].classList.remove("select");
+    console.log('Account clicked:', account, 'Element:', target);
+    
+    if (!account) {
+        console.error('Account ID is missing!');
+        return;
     }
-    target.classList.add("select");
+    
+    console.log('Sending changeAccount message for:', account);
+    
+    safeSendMessage({"method": "changeAccount", "account": account})
+        .then(() => {
+            console.log('changeAccount message sent successfully');
+            // Update UI only after successful message send
+            var account_divs = document.querySelectorAll('div.account');
+            for (i=0; i<account_divs.length; i++) {
+                account_divs[i].classList.remove("select");
+            }
+            target.classList.add("select");
+        })
+        .catch((error) => {
+            console.error('Failed to send changeAccount message:', error);
+            // Show user feedback about the error
+            alert('Failed to switch account. Please try refreshing the extension.');
+        });
 }
 
 function toggle_menu(e) {
+    e.stopPropagation();
     var target = e.currentTarget;
-    var drop_div = null;
-    if (target.id == "open_menu") {
-        pos = 370;
-        target_pos = 1;
-        offset = -5;
-        drop_div = target.parentElement.querySelector(".drop_content");
-    } else if (target.id == "close_menu") {
-        pos = 1;
-        target_pos = 370;
-        offset = 5;
-        drop_div = target.parentElement;
-    } else {
-        // Unknown button triggered menu toggle
-        return;
+    var drop_div = target.parentElement.querySelector(".drop_content");
+    
+    console.log('toggle_menu called', target, drop_div);
+    
+    // Close all other menus first
+    const allDropdowns = document.querySelectorAll('.drop_content');
+    allDropdowns.forEach(dropdown => {
+        if (dropdown !== drop_div) {
+            dropdown.classList.remove('show');
+        }
+    });
+    
+    // Toggle the clicked menu
+    if (drop_div) {
+        const isShowing = drop_div.classList.contains('show');
+        if (isShowing) {
+            drop_div.classList.remove('show');
+        } else {
+            // Calculate position to ensure it's visible
+            const rect = target.getBoundingClientRect();
+            drop_div.style.position = 'absolute';
+            drop_div.style.top = '100%';
+            drop_div.style.left = '0';
+            drop_div.classList.add('show');
+        }
+        console.log('Toggled menu, now has show class:', drop_div.classList.contains('show'));
     }
-    id = setInterval(function() {
-        if (Math.abs(target_pos - pos) < Math.abs(offset)) {
-            offset = target_pos - pos;
-        }
-        pos+=offset;
-        drop_div.style.left = pos + 'px';
-        if (pos == target_pos) {
-            clearInterval(id);
-        }
-    }, 1);
 }
 
 function get_all_accounts() {
@@ -347,7 +441,7 @@ function get_all_accounts() {
     button.disabled = true;
     button.classList.add('loading-state');
     
-    chrome.runtime.sendMessage({"method": "getAllAccounts"});
+    safeSendMessage({"method": "getAllAccounts"});
     
     // Re-enable button after a delay (will be overridden by actual response)
     setTimeout(() => {
@@ -366,6 +460,8 @@ function delete_all_accounts() {
 }
 
 function expire_account(e) {
+    e.stopPropagation();
+    closeAllMenus();
     var account_name = e.currentTarget.closest(".row").querySelector("#account_name").innerText;
     var account_role = e.currentTarget.closest(".row").querySelector("#account_role").innerText;
     var account = account_name + '/' + account_role;
@@ -378,15 +474,19 @@ function expire_account(e) {
 }
 
 function delete_account(e) {
+    e.stopPropagation();
+    closeAllMenus();
     var account_name = e.currentTarget.closest(".row").querySelector("#account_name").innerText;
     var account_role = e.currentTarget.closest(".row").querySelector("#account_role").innerText;
     var account = account_name + '/' + account_role;
-    chrome.storage.local.get(["accounts"], function(result) {
-        if (result.accounts == undefined) {return}
-        if (result.accounts[account] == undefined) {return}
-        delete result.accounts[account];
-        chrome.storage.local.set(result, function(){location.reload()});
-    });
+    if (confirm(`Are you sure you want to delete account "${account_name}" with role "${account_role}"?`)) {
+        chrome.storage.local.get(["accounts"], function(result) {
+            if (result.accounts == undefined) {return}
+            if (result.accounts[account] == undefined) {return}
+            delete result.accounts[account];
+            chrome.storage.local.set(result, function(){location.reload()});
+        });
+    }
 }
 
 chrome.runtime.onMessage.addListener( function(request,_sender,_sendResponse) {
@@ -422,12 +522,12 @@ function openTab(tabName) {
     // Get all elements with class="tablinks" and remove the class "active"
     tablinks = document.getElementsByClassName("tablinks");
     for (i = 0; i < tablinks.length; i++) {
-      tablinks[i].className = tablinks[i].className.replace(" active", "");
+      tablinks[i].classList.remove("active");
     }
   
     // Show the current tab, and add an "active" class to the button that opened the tab
     document.querySelector("div#" + tabName).style.display = "block";
-    document.querySelector("button#" + tabName).className += " active";
+    document.querySelector("button#" + tabName).classList.add("active");
     chrome.storage.local.get(["settings"], function(storage){
         storage.settings.current_tab = tabName;
         chrome.storage.local.set(storage);
@@ -449,19 +549,6 @@ function save_setting(e) {
     });
 }
 
-function update_role_filters() {
-    chrome.storage.local.get("settings", function(storage){
-        if (storage.settings == undefined) {storage.settings = {}}
-        storage.settings.role_filters = [];
-        var filters = document.querySelectorAll("div.role_filter input");
-        filters.forEach(filter => {
-            if (filter.value != "") {
-                storage.settings.role_filters.push(filter.value);
-            }
-        });
-        chrome.storage.local.set(storage);
-    });
-}
 
 function okta_login() {
     // Show immediate feedback before starting login process
@@ -480,7 +567,7 @@ function okta_login() {
     
     // The loading animation will be handled by update_login_status() 
     // when the background script updates the login status
-    chrome.runtime.sendMessage({"method": "loginOkta"});
+    safeSendMessage({"method": "loginOkta"});
 }
 
 function update_login_status() {
@@ -570,40 +657,6 @@ function update_accounts_status() {
     });
 }
 
-function add_aws_role_filter(value) {
-    if (typeof value != "string") {value = ""}
-    var role_filters_list = document.getElementById("role_filters_list");
-    var role_filter_div = document.createElement("div");
-    role_filter_div.className = "role_filter";
-    role_filters_list.appendChild(role_filter_div);
-    var role_filter_input = document.createElement('input');
-    role_filter_input.className = "text_setting_value";
-    role_filter_input.value = value;
-    role_filter_input.addEventListener("focusout", update_role_filters);
-    role_filter_input.spellcheck = false;
-    role_filter_div.appendChild(role_filter_input);
-    var role_filter_delete_button = document.createElement('button');
-    role_filter_delete_button.className = "small_button fa fa-trash-alt";
-    role_filter_delete_button.addEventListener("click", delete_role_filter);
-    role_filter_div.appendChild(role_filter_delete_button);
-}
-
-function delete_role_filter(e) {
-    var target = e.currentTarget;
-    if (target == undefined) {return};
-    var role_filter_div = target.parentElement;
-    var filter_value = role_filter_div.querySelector("input").value;
-    document.getElementById("role_filters_list").removeChild(role_filter_div);
-    chrome.storage.local.get("settings", function(storage){
-        if (storage.settings == undefined) {return}
-        if (storage.settings.role_filters == undefined) {return}
-        var index = storage.settings.role_filters.indexOf(filter_value);
-        if (index > -1) {
-            storage.settings.role_filters.splice(index, 1);
-        }
-        chrome.storage.local.set(storage);
-    });
-}
 
 function update_okta_apps() {
     chrome.storage.local.get(["okta_apps_status"], function(storage){

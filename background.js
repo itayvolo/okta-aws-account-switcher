@@ -1,12 +1,60 @@
 // AWS Account Switcher - Service Worker
 
-function safeSendMessage(message) {
-    try {
-        chrome.runtime.sendMessage(message);
-    } catch (e) {
-        // Popup is not open, continuing in background
-        console.log("Popup not open:", e.message);
+// Keep service worker alive
+let keepAliveInterval;
+
+function startKeepAlive() {
+    keepAliveInterval = setInterval(() => {
+        chrome.storage.local.get(['_keepalive'], () => {
+            // This will keep the service worker alive
+        });
+    }, 20000); // Every 20 seconds
+}
+
+function stopKeepAlive() {
+    if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
     }
+}
+
+// Start keepalive when service worker starts
+startKeepAlive();
+
+// Listen for extension startup
+chrome.runtime.onStartup.addListener(() => {
+    console.log('Extension startup - starting keepalive');
+    startKeepAlive();
+});
+
+// Listen for extension install
+chrome.runtime.onInstalled.addListener(() => {
+    console.log('Extension installed - starting keepalive');
+    startKeepAlive();
+});
+
+function safeSendMessage(message) {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage(message)
+                .then(() => {
+                    resolve();
+                })
+                .catch((error) => {
+                    // Popup is not open or connection failed, continuing in background
+                    if (error.message.includes('Could not establish connection')) {
+                        // This is expected when popup is closed, don't log as error
+                        console.log("Popup not open - message not sent:", message.method);
+                    } else {
+                        console.log("Message send error:", error.message);
+                    }
+                    resolve(); // Always resolve to continue background operations
+                });
+        } catch (e) {
+            console.log("Exception sending message:", e.message);
+            resolve();
+        }
+    });
 }
 
 function get_all_accounts() {
@@ -60,29 +108,29 @@ function get_all_accounts() {
 }
 
 function change_account(account){
-    save (false, function() {
-        chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
-            for (i = 0; i<cookies_to_remove.length; i++) {
-                if (cookies_to_remove[i].name == "noflush_awscnm") {continue;}
-                var cookie_to_remove = {};
-                cookie_to_remove.name = cookies_to_remove[i].name;
-                var domain = cookies_to_remove[i].domain.match(/^\.?(.+)$/)[1];
-                cookie_to_remove.url = "https://" + domain + cookies_to_remove[i].path;
-                cookie_to_remove.storeId = cookies_to_remove[i].storeId;
-                chrome.cookies.remove(cookie_to_remove);
+    console.log('change_account called for:', account);
+    console.log('Switching to account:', account);
+    chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
+        for (i = 0; i<cookies_to_remove.length; i++) {
+            if (cookies_to_remove[i].name == "noflush_awscnm") {continue;}
+            var cookie_to_remove = {};
+            cookie_to_remove.name = cookies_to_remove[i].name;
+            var domain = cookies_to_remove[i].domain.match(/^\.?(.+)$/)[1];
+            cookie_to_remove.url = "https://" + domain + cookies_to_remove[i].path;
+            cookie_to_remove.storeId = cookies_to_remove[i].storeId;
+            chrome.cookies.remove(cookie_to_remove);
+        }
+        chrome.storage.local.get(["accounts"], function(result) {
+            cookies_to_add = result["accounts"][account].cookies;
+            for (i=0; i<cookies_to_add.length; i++) {
+                var cookie_to_add = cookies_to_add[i];
+                delete cookie_to_add.hostOnly;
+                delete cookie_to_add.session;
+                var domain = cookie_to_add.domain.match(/^\.?(.+)$/)[1];
+                cookie_to_add.url = "https://" + domain + cookie_to_add.path;
+                chrome.cookies.set(cookie_to_add);            
             }
-            chrome.storage.local.get(["accounts"], function(result) {
-                cookies_to_add = result["accounts"][account].cookies;
-                for (i=0; i<cookies_to_add.length; i++) {
-                    var cookie_to_add = cookies_to_add[i];
-                    delete cookie_to_add.hostOnly;
-                    delete cookie_to_add.session;
-                    var domain = cookie_to_add.domain.match(/^\.?(.+)$/)[1];
-                    cookie_to_add.url = "https://" + domain + cookie_to_add.path;
-                    chrome.cookies.set(cookie_to_add);            
-                }
-                refresh_all_aws_tabs();
-            });
+            refresh_all_aws_tabs();
         });
     });
 }
@@ -108,11 +156,12 @@ function refresh_all_aws_tabs() {
     });
 }
 
-function save(login, callback){
+function save(login, callback, originalAccountKey){
     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Saving account cookies."}});
     safeSendMessage({"method": "UpdateAccountsStatus"});
     var account_name, account_id, account_role;
     chrome.cookies.getAll({"domain": ".amazon.com"}, function(all_cookies){
+        
         if (all_cookies.length == 0) {callback();return}
         for (i=0; i<all_cookies.length; i++) {
             if (all_cookies[i].name == "XSRF-TOKEN") {
@@ -123,24 +172,93 @@ function save(login, callback){
                 all_cookies.splice(i,1);
                 i--;
             }
+            // Check for aws-userInfo (legacy)
             if (all_cookies[i].name == "aws-userInfo") {
                 if (all_cookies[i].domain === "amazon.com") {continue;}
-                var userInfo = JSON.parse(decodeURIComponent(all_cookies[i].value));
-                account_name = userInfo.alias;
-                account_id = userInfo.arn.match(/sts::([0-9]+):/)[1];
-                account_role = userInfo.arn.split('/')[1];
+                try {
+                    var userInfo = JSON.parse(decodeURIComponent(all_cookies[i].value));
+                    account_name = userInfo.alias;
+                    account_id = userInfo.arn.match(/sts::([0-9]+):/)[1];
+                    account_role = userInfo.arn.split('/')[1];
+                } catch (error) {
+                    // Continue to next cookie on error
+                }
+            }
+            
+            // Check for aws-consoleInfo (newer AWS console - JWT format)
+            if (all_cookies[i].name == "aws-consoleInfo") {
+                if (all_cookies[i].domain === "amazon.com") {continue;}
+                try {
+                    // JWT has 3 parts separated by dots: header.payload.signature
+                    const jwtParts = all_cookies[i].value.split('.');
+                    if (jwtParts.length >= 2) {
+                        // Decode the payload (second part)
+                        const payload = JSON.parse(atob(jwtParts[1]));
+                        
+                        if (payload.sub) {
+                            // Extract from ARN format like: "arn:aws:iam::015428540659:user/route53"
+                            const arnMatch = payload.sub.match(/arn:aws:iam::([0-9]+):(?:user|assumed-role)\/(.+?)(?:\/|$)/);
+                            if (arnMatch) {
+                                account_id = arnMatch[1];
+                                const userOrRole = arnMatch[2];
+                                
+                                // For assumed roles, extract role name
+                                if (payload.sub.includes('assumed-role')) {
+                                    account_role = userOrRole.split('/')[0];
+                                    account_name = account_id; // Use account ID as name for now
+                                } else {
+                                    // For IAM users
+                                    account_name = account_id; // Use account ID as name
+                                    account_role = userOrRole; // The user name becomes the role
+                                }
+                                
+                                break; // Stop after finding the first valid cookie
+                            }
+                        }
+                    }
+                } catch (error) {
+                    // Continue to next cookie on error
+                }
             }
         }
-        if (account_name == undefined || account_id == undefined || account_role == undefined) {callback();return}
+        
+        console.log('save() extracted account info:', {
+            account_name: account_name,
+            account_id: account_id, 
+            account_role: account_role,
+            originalAccountKey: originalAccountKey
+        });
+        
+        if (account_name == undefined || account_id == undefined || account_role == undefined) {
+            console.error('save() failed to extract account info from cookies');
+            callback();
+            return;
+        }
         var expirationDate;
         chrome.storage.local.get(["accounts"], function(storage) {
-            if (storage.accounts != undefined && storage.accounts[account_name + '/' + account_role] != undefined) {
-                expirationDate = storage.accounts[account_name + '/' + account_role].expirationDate;
+            if (storage.accounts == undefined) {
+                storage.accounts = {};
+            }
+            // Try to get existing expiration date using the original account key if provided
+            const lookupKey = originalAccountKey || (account_name + '/' + account_role);
+            if (storage.accounts[lookupKey] != undefined) {
+                expirationDate = storage.accounts[lookupKey].expirationDate;
             }
             if (login) {
                 expirationDate = (Date.now()/1000) + (9 * 60 * 60);
             }
-            storage.accounts[account_name + '/' + account_role] = {"id": account_id, "cookies": all_cookies, "expirationDate": expirationDate, "status": "ready"};
+            
+            // Use original account key if provided, otherwise construct new one
+            const accountKey = originalAccountKey || (account_name + '/' + account_role);
+            const accountData = {"id": account_id, "cookies": all_cookies, "expirationDate": expirationDate, "status": "ready"};
+            
+            console.log('save() storing account data:', {
+                accountKey: accountKey,
+                accountId: account_id,
+                originalAccountKey: originalAccountKey
+            });
+            
+            storage.accounts[accountKey] = accountData;
             chrome.storage.local.set(storage, function(){
                 safeSendMessage({"method": "UpdatePopup"});
                 callback();
@@ -150,6 +268,7 @@ function save(login, callback){
 }
 
 function login(account, callback) {
+    console.log('login called for account:', account);
     chrome.storage.local.get(["accounts"], function(storage){
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
         safeSendMessage({"method": "UpdateAccountsStatus"});
@@ -164,18 +283,174 @@ function login(account, callback) {
             return;
         }
         var account_id = storage.accounts[account].id;
+        var account_name = account.split('/')[0];
         var account_role = account.split('/')[1];
+        console.log(`Extracted account info: id="${account_id}", name="${account_name}", role="${account_role}"`);
+        
         aws_login(function(tab_id){
+            console.log('aws_login callback called with tab_id:', tab_id);
             chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
+            console.log('Executing account selection script on tab:', tab_id);
             chrome.scripting.executeScript({
                 target: {tabId: tab_id},
-                func: (account_id, account_role) => {
-                    document.querySelector(`input[type="radio"][value*="${account_id}"][value*="${account_role}"]`).checked = true;
-                    document.getElementById('signin_button').click();
+                func: (account_id, account_name, account_role) => {
+                    console.log('Script execution started on AWS SSO page');
+                    console.log('Current URL:', window.location.href);
+                    console.log('Page title:', document.title);
+                    console.log('Document ready state:', document.readyState);
+                    console.log(`Searching for account: name="${account_name}", id="${account_id}", role="${account_role}"`);
+                    
+                    // Wait for page to be ready and return debug info
+                    if (document.readyState !== 'complete') {
+                        console.log('Page not ready, waiting...');
+                        return {
+                            status: 'page_not_ready',
+                            url: window.location.href,
+                            title: document.title,
+                            readyState: document.readyState
+                        };
+                    }
+                    
+                    // Debug: List all available accounts
+                    const accountContainers = document.querySelectorAll('.saml-account');
+                    console.log(`Found ${accountContainers.length} account containers`);
+                    
+                    accountContainers.forEach((container, index) => {
+                        const accountNameEl = container.querySelector('.saml-account-name');
+                        const radio = container.querySelector('input[type="radio"]');
+                        if (accountNameEl && radio) {
+                            console.log(`Account ${index}: name="${accountNameEl.innerText.trim()}", value="${radio.value}"`);
+                        }
+                    });
+                    
+                    // Try multiple selectors to find the correct radio button
+                    let radioButton = null;
+                    
+                    // Strategy 1: Find by account name and role (most reliable)
+                    for (const container of accountContainers) {
+                        const radio = container.querySelector('input[type="radio"]');
+                        const accountNameEl = container.querySelector('.saml-account-name');
+                        
+                        if (radio && accountNameEl && radio.value.includes(account_role)) {
+                            const displayName = accountNameEl.innerText.trim();
+                            
+                            // Check if display name contains the account name (e.g., "Account: sternum-dev (123)" contains "sternum-dev")
+                            if (displayName.includes(account_name)) {
+                                console.log(`Found match by account name and role: ${displayName}`);
+                                radioButton = radio;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Strategy 2: Find by account ID and role (fallback)
+                    if (!radioButton) {
+                        for (const container of accountContainers) {
+                            const radio = container.querySelector('input[type="radio"]');
+                            const accountNameEl = container.querySelector('.saml-account-name');
+                            
+                            if (radio && accountNameEl && radio.value.includes(account_role)) {
+                                const displayName = accountNameEl.innerText.trim();
+                                
+                                // Check if display name contains the account ID
+                                if (displayName.includes(account_id)) {
+                                    console.log(`Found match by account ID and role: ${displayName}`);
+                                    radioButton = radio;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Strategy 3: Find by role only (if only one account with this role)
+                    if (!radioButton) {
+                        const roleMatches = [];
+                        for (const container of accountContainers) {
+                            const radio = container.querySelector('input[type="radio"]');
+                            if (radio && radio.value.includes(account_role)) {
+                                roleMatches.push(radio);
+                            }
+                        }
+                        if (roleMatches.length === 1) {
+                            console.log(`Found unique match by role only: ${account_role}`);
+                            radioButton = roleMatches[0];
+                        }
+                    }
+                    
+                    if (radioButton) {
+                        console.log(`Selecting radio button and clicking sign-in`);
+                        radioButton.checked = true;
+                        // Try to trigger change event to ensure UI updates
+                        radioButton.dispatchEvent(new Event('change', { bubbles: true }));
+                        
+                        // Click the sign-in button
+                        const signInButton = document.getElementById('signin_button');
+                        if (signInButton) {
+                            signInButton.click();
+                            console.log(`Sign-in button clicked successfully`);
+                            return {
+                                status: 'success',
+                                selectedAccount: radioButton.value,
+                                signInClicked: true
+                            };
+                        } else {
+                            console.error('Sign-in button not found');
+                            return {
+                                status: 'signin_button_not_found',
+                                selectedAccount: radioButton.value,
+                                signInClicked: false
+                            };
+                        }
+                    } else {
+                        console.error(`No radio button found for account "${account_name}" (ID: ${account_id}) with role "${account_role}"`);
+                        console.error('Available accounts:', accountContainers.length);
+                        
+                        // Return debug info about what was found
+                        const availableAccounts = [];
+                        accountContainers.forEach((container, index) => {
+                            const accountNameEl = container.querySelector('.saml-account-name');
+                            const radio = container.querySelector('input[type="radio"]');
+                            if (accountNameEl && radio) {
+                                availableAccounts.push({
+                                    name: accountNameEl.innerText.trim(),
+                                    value: radio.value
+                                });
+                            }
+                        });
+                        
+                        return {
+                            status: 'account_not_found',
+                            searchedFor: {
+                                name: account_name,
+                                id: account_id,
+                                role: account_role
+                            },
+                            availableAccounts: availableAccounts,
+                            totalContainers: accountContainers.length
+                        };
+                    }
                 },
-                args: [account_id, account_role]
-            }).then(() => {
+                args: [account_id, account_name, account_role]
+            }).then((results) => {
+                console.log('Account selection script executed successfully');
+                const result = results[0].result;
+                console.log('Script result:', result);
+                
+                if (result && result.status === 'page_not_ready') {
+                    console.log('Page not ready, will retry selection after page loads');
+                    // TODO: Add retry logic for page not ready
+                    return;
+                }
+                
+                if (result && result.status === 'account_not_found') {
+                    console.error('Account not found on AWS SSO page');
+                    console.error('Searched for:', result.searchedFor);
+                    console.error('Available accounts:', result.availableAccounts);
+                    chrome.storage.local.set({"accounts_status": {"status": "failed", "message": `Account not found. Available: ${result.availableAccounts.map(a => a.name).join(', ')}`}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    return;
+                }
                 var console_timer = setInterval(wait_console, 1000);
                 function wait_console() {
                     chrome.scripting.executeScript({
@@ -186,12 +461,19 @@ function login(account, callback) {
                         if (tab_url == undefined) {return}
                         if (tab_url.includes("console.aws.amazon.com")) {
                             clearInterval(console_timer);
-                            save(true, function(){
-                                chrome.tabs.query({"url": "*://*.console.aws.amazon.com/*"}, function(tabs){
-                                    if (tabs.length > 1) {chrome.tabs.remove(tab_id);}
-                                });
-                                callback();   
-                            });
+                            console.log('AWS console loaded:', tab_url);
+                            console.log('Expected account should be:', account, 'with ID:', account_id);
+                            console.log('Waiting 3 seconds for account to fully load...');
+                            // Wait for AWS console to fully load the correct account before saving cookies
+                            setTimeout(() => {
+                                console.log('Saving account cookies after delay...');
+                                save(true, function(){
+                                    chrome.tabs.query({"url": "*://*.console.aws.amazon.com/*"}, function(tabs){
+                                        if (tabs.length > 1) {chrome.tabs.remove(tab_id);}
+                                    });
+                                    callback();   
+                                }, account);
+                            }, 3000);
                         }
                     }).catch((error) => {
                         chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
@@ -200,7 +482,9 @@ function login(account, callback) {
                     });
                 }
             }).catch((error) => {
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
+                console.error('Script execution failed:', error);
+                console.error('Error details:', error.message);
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Script execution failed: " + error.message}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
             });
         });
@@ -230,23 +514,36 @@ function checkExpire(){
 }
 
 chrome.runtime.onMessage.addListener( function(request, sender, sendResponse) {
+    console.log('Background received message:', request);
+    
     if (request.method == "changeAccount") {
+        console.log('Processing changeAccount for:', request.account);
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
         safeSendMessage({"method": "UpdateAccountsStatus"});
         chrome.storage.local.get(["accounts"], function(result){
+            console.log('Loaded accounts from storage:', result.accounts);
+            
             if (result.accounts == undefined) {
+                console.error('No accounts found in storage');
                 chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No accounts found in storage."}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 return;
             }
             if (result.accounts[request.account] == undefined) {
+                console.error('Account not found:', request.account, 'Available accounts:', Object.keys(result.accounts));
                 chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No such account " + request.account}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 return;
             }
-            if (result.accounts[request.account].status == "expired") {
+            
+            const accountData = result.accounts[request.account];
+            console.log('Account data for', request.account, ':', accountData);
+            
+            if (accountData.status == "expired") {
+                console.log('Account is expired, attempting login...');
                 login(request.account, refresh_all_aws_tabs);
             } else {
+                console.log('Account is ready, changing account...');
                 change_account(request.account);
             }
         });
@@ -290,7 +587,25 @@ chrome.idle.onStateChanged.addListener(function(state) {
 });
 
 function aws_login(callback) {
-    chrome.storage.local.get(["settings"], function(storage){
+    console.log('aws_login function called');
+    
+    // Clear existing AWS cookies to prevent old session interference
+    console.log('Clearing existing AWS cookies...');
+    chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
+        cookies_to_remove.forEach(cookie => {
+            if (cookie.name == "noflush_awscnm") return; // Keep this cookie
+            var cookie_to_remove = {};
+            cookie_to_remove.name = cookie.name;
+            var domain = cookie.domain.match(/^\.?(.+)$/)[1];
+            cookie_to_remove.url = "https://" + domain + cookie.path;
+            cookie_to_remove.storeId = cookie.storeId;
+            chrome.cookies.remove(cookie_to_remove);
+        });
+        console.log('AWS cookies cleared, proceeding with login...');
+        
+        // Now proceed with login after cookies are cleared
+        chrome.storage.local.get(["settings"], function(storage){
+        console.log('aws_login loaded settings:', storage.settings);
         if (storage.settings == undefined) {
             chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found."}})
             safeSendMessage({"method": "UpdateAccountsStatus"});
@@ -346,10 +661,14 @@ function aws_login(callback) {
 }
 
 function okta_login(callback, callback_argument = null) {
-    // Store current active tab to return to later
+    // Store current active tab to return to later and reset tab switching flag
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         const originalTab = tabs[0];
-        chrome.storage.local.set({"originalTab": {id: originalTab.id, url: originalTab.url}});
+        chrome.storage.local.set({
+            "originalTab": {id: originalTab.id, url: originalTab.url},
+            "hasReturnedToOriginalTab": false,  // Reset for new login session
+            "appsAlreadyLoading": false  // Reset app loading flag
+        });
         
         chrome.storage.local.get(["settings"], function(storage){
             chrome.storage.local.set({"login_status": {"status": "progress", "message": "Starting seamless login..."}});
@@ -1313,9 +1632,7 @@ function monitorOktaLogin(tabId, callback, callback_argument) {
                 chrome.storage.local.set({"login_status": {"status": "success", "message": "Login successful!"}});
                 safeSendMessage({"method": "UpdateLoginStatus"});
                 
-                // Add badge to extension icon to indicate successful login
-                chrome.action.setBadgeText({text: "✓"});
-                chrome.action.setBadgeBackgroundColor({color: "#4CAF50"});
+                // Login successful - apps will now load with final badge update
                 
                 // Show success notification
                 chrome.notifications.create({
@@ -1327,12 +1644,15 @@ function monitorOktaLogin(tabId, callback, callback_argument) {
                 
                 // Original tab return is handled by credential injection logic
                 
-                // Load apps directly from current dashboard page
-                chrome.storage.local.get(["settings"], function(storage){
-                    if (storage.settings && storage.settings.okta_domain) {
+                // Load apps directly from current dashboard page (only once per session)
+                chrome.storage.local.get(["settings", "appsAlreadyLoading"], function(storage){
+                    if (storage.settings && storage.settings.okta_domain && !storage.appsAlreadyLoading) {
                         // Update badge to show apps loading
                         chrome.action.setBadgeText({text: "📱"});
                         chrome.action.setBadgeBackgroundColor({color: "#9C27B0"});
+                        
+                        // Set flag to prevent multiple loading attempts
+                        chrome.storage.local.set({"appsAlreadyLoading": true});
                         
                         const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
                         makeOktaApiCall(tabId, list_apps_url, true);
@@ -1431,12 +1751,18 @@ function startManualLoginMonitoring(tabId, callback, callback_argument) {
 function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth = 0) {
     // Prevent infinite recursion
     if (recursionDepth >= 5) {
-        console.log("Maximum recursion depth reached for OAuth2 monitoring - finishing");
         chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login process took too long"}});
         safeSendMessage({"method": "UpdateLoginStatus"});
         chrome.tabs.remove(tabId);
         return;
     }
+    
+    // Store flag in Chrome storage to persist across recursive calls
+    chrome.storage.local.get(["hasReturnedToOriginalTab"], function(result) {
+        if (!result.hasReturnedToOriginalTab) {
+            chrome.storage.local.set({"hasReturnedToOriginalTab": false});
+        }
+    });
     
     // Make tab active briefly so login form loads properly
     chrome.tabs.update(tabId, { active: true }, function() {
@@ -1447,7 +1773,6 @@ function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, 
     });
     
     let monitorCount = 0;
-    let hasReturnedToOriginalTab = false; // Flag to prevent multiple tab switches
     
     // Give the page 2 seconds to detect tab activation and load forms
     setTimeout(() => {
@@ -1636,16 +1961,20 @@ function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, 
                 chrome.action.setBadgeBackgroundColor({color: "#FF9800"});
                 
                 // Return to original tab now that we found the form and are injecting (only once)
-                if (!hasReturnedToOriginalTab) {
-                    hasReturnedToOriginalTab = true;
-                    chrome.storage.local.get(["originalTab"], function(result) {
-                        if (result.originalTab && result.originalTab.id) {
-                            chrome.tabs.update(result.originalTab.id, { active: true }).catch(() => {
-                                // Original tab may have been closed, that's OK
-                            });
-                        }
-                    });
-                }
+                chrome.storage.local.get(["hasReturnedToOriginalTab"], function(returnResult) {
+                    if (!returnResult.hasReturnedToOriginalTab) {
+                        chrome.storage.local.set({"hasReturnedToOriginalTab": true});
+                        chrome.storage.local.get(["originalTab"], function(tabResult) {
+                            if (tabResult.originalTab && tabResult.originalTab.id) {
+                                setTimeout(() => {
+                                    chrome.tabs.update(tabResult.originalTab.id, { active: true }).catch(() => {
+                                        // Original tab may have been closed, that's OK
+                                    });
+                                }, 100); // Small delay to ensure credential injection starts
+                            }
+                        });
+                    }
+                });
                 
                 // Inject credentials
                 chrome.scripting.executeScript({
@@ -2047,6 +2376,10 @@ function makeOktaApiCall(tabId, apiUrl, closeTab = false, callback = null, retry
                     title: 'AWS Account Switcher',
                     message: `Ready! Loaded ${appCount} applications.`
                 });
+                
+                // Final green badge to show completion
+                chrome.action.setBadgeText({text: "✅"});
+                chrome.action.setBadgeBackgroundColor({color: "#4CAF50"});
                 
                 if (callback) callback(true);
             } else {
