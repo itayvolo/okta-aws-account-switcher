@@ -1,0 +1,34 @@
+{
+    "manifest_version": 3,
+   
+    "name": "AWS AccountSwitcher",
+    "version": "5.1.0",
+    "description": "The tool to switch AWS account without login",
+
+    "permissions": [
+        "storage",
+        "cookies",
+        "alarms",
+        "idle",
+        "tabs",
+        "scripting"
+    ],
+    
+    "host_permissions": [
+        "*://*.amazon.com/*",
+        "*://*.okta.com/*",
+        "*://*.sternum.cloud/*"
+    ],
+   
+    "background": {
+      "service_worker": "background.js"
+    },
+
+    "action": {
+      "default_popup": "popup.html"
+    },
+
+    "icons": {
+      "48": "Icons/icon_48.png"
+    }
+}
