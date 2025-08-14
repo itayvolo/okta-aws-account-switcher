@@ -28,8 +28,8 @@ A Chrome extension that allows you to easily switch between AWS accounts without
 ### Method 1: Load Unpacked (Developer Mode)
 1. **Clone this repository**
    ```bash
-   git clone https://github.com/your-username/AWS-Account-Switcher.git
-   cd AWS-Account-Switcher
+   git clone https://github.com/itayvolo/okta-aws-account-switcher.git
+   cd okta-aws-account-switcher
    ```
 
 2. **Open Chrome Extensions**
@@ -144,7 +144,7 @@ If you encounter issues, use the **Refresh** button (🔄) in the top-left corne
 
 ### Project Structure
 ```
-AWS-Account-Switcher/
+okta-aws-account-switcher/
 ├── manifest.json          # Extension manifest (v3)
 ├── background.js          # Service worker
 ├── popup.html            # Extension popup UI
