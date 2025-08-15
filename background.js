@@ -627,36 +627,36 @@ function aws_login(callback) {
             fetch(list_apps_url, {
                 method: 'GET',
                 credentials: 'include'
-            });
-        }).then(response => {
-            if (!response.ok) {
-                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing okta login"}});
-                safeSendMessage({"method": "UpdateAccountsStatus"});
-                okta_login(aws_login, callback);
-                return;
-            }
-            chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}});
-            safeSendMessage({"method": "UpdateAccountsStatus"});
-            chrome.tabs.create({"url": aws_saml_url, "selected": false}, function(tab) {
-                var signin_timer = setInterval(wait_signin, 1000);
-                function wait_signin(){           
-                    chrome.scripting.executeScript({
-                        target: {tabId: tab.id},
-                        func: () => window.location.href
-                    }).then((results) => {
-                        const tab_url = results[0].result;
-                        if (tab_url != "https://signin.aws.amazon.com/saml") {return}
-                        clearInterval(signin_timer);
-                        callback(tab.id);
-                    }).catch((error) => {
-                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
-                        safeSendMessage({"method": "UpdateAccountsStatus"});
-                    });
+            }).then(response => {
+                if (!response.ok) {
+                    chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing okta login"}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    okta_login(aws_login, callback);
+                    return;
                 }
+                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}});
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                chrome.tabs.create({"url": aws_saml_url, "selected": false}, function(tab) {
+                    var signin_timer = setInterval(wait_signin, 1000);
+                    function wait_signin(){           
+                        chrome.scripting.executeScript({
+                            target: {tabId: tab.id},
+                            func: () => window.location.href
+                        }).then((results) => {
+                            const tab_url = results[0].result;
+                            if (tab_url != "https://signin.aws.amazon.com/saml") {return}
+                            clearInterval(signin_timer);
+                            callback(tab.id);
+                        }).catch((error) => {
+                            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
+                            safeSendMessage({"method": "UpdateAccountsStatus"});
+                        });
+                    }
+                });
+            }).catch((error) => {
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
+                safeSendMessage({"method": "UpdateAccountsStatus"});
             });
-        }).catch((error) => {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
-            safeSendMessage({"method": "UpdateAccountsStatus"});
         });
     });
 }
