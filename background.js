@@ -468,9 +468,7 @@ function login(account, callback) {
                             setTimeout(() => {
                                 console.log('Saving account cookies after delay...');
                                 save(true, function(){
-                                    chrome.tabs.query({"url": "*://*.console.aws.amazon.com/*"}, function(tabs){
-                                        if (tabs.length > 1) {chrome.tabs.remove(tab_id);}
-                                    });
+                                    // Don't close AWS console tabs - let user manage them
                                     callback();   
                                 }, account);
                             }, 3000);
@@ -557,6 +555,32 @@ chrome.runtime.onMessage.addListener( function(request, sender, sendResponse) {
     else if (request.method == "loadOktaApps") {
         loadOktaApps();
     }
+    else if (request.method == "expireAccount") {
+        // Clear AWS cookies to log out and expire the account
+        console.log('Expiring account:', request.account);
+        chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
+            cookies_to_remove.forEach(cookie => {
+                if (cookie.name == "noflush_awscnm") return; // Keep this cookie
+                var cookie_to_remove = {};
+                cookie_to_remove.name = cookie.name;
+                var domain = cookie.domain.match(/^\.?(.+)$/)[1];
+                cookie_to_remove.url = "https://" + domain + cookie.path;
+                cookie_to_remove.storeId = cookie.storeId;
+                chrome.cookies.remove(cookie_to_remove);
+            });
+            
+            // Update account status to expired
+            chrome.storage.local.get(["accounts"], function(result) {
+                if (result.accounts && result.accounts[request.account]) {
+                    result.accounts[request.account].status = "expired";
+                    chrome.storage.local.set(result, function() {
+                        console.log('Account expired and cookies cleared:', request.account);
+                        safeSendMessage({"method": "UpdatePopup"});
+                    });
+                }
+            });
+        });
+    }
 });
 
 function registerAlarms(alarmName) {
@@ -605,7 +629,7 @@ function aws_login(callback) {
         
         // Now proceed with login after cookies are cleared
         chrome.storage.local.get(["settings"], function(storage){
-            console.log('aws_login loaded settings:', storage.settings);
+            // Settings loaded successfully
             if (storage.settings == undefined) {
                 chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found."}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
@@ -968,8 +992,8 @@ function handleLoginTab(tabId, callback, callback_argument, username, password, 
                                                           inp.value.includes('Sign') || 
                                                           inp.value.includes('Login'));
                                     console.log("Login form search results:");
-                                    console.log("Username field found:", !!usernameField, usernameField?.tagName, usernameField?.id, usernameField?.name);
-                                    console.log("Password field found:", !!passwordField, passwordField?.tagName, passwordField?.id, passwordField?.name);
+                                    // Username field detection completed
+                                    // Password field detection completed
                                     console.log("Submit button found:", !!submitButton, submitButton?.tagName, submitButton?.id, submitButton?.className);
                                     
                                     if (usernameField && passwordField && submitButton) {
@@ -1000,13 +1024,13 @@ function handleLoginTab(tabId, callback, callback_argument, username, password, 
                                                 inp.placeholder?.toLowerCase().includes('user') ||
                                                 inp.placeholder?.toLowerCase().includes('email')
                                             );
-                                            console.log("Fallback username field:", usernameField ? {tag: usernameField.tagName, type: usernameField.type, name: usernameField.name, id: usernameField.id} : 'none');
+                                            // Fallback username field search completed
                                         }
                                         
                                         // Try any password input if not found
                                         if (!passwordField) {
                                             passwordField = allInputs.find(inp => inp.type === 'password');
-                                            console.log("Fallback password field:", passwordField ? {tag: passwordField.tagName, type: passwordField.type, name: passwordField.name, id: passwordField.id} : 'none');
+                                            // Fallback password field search completed
                                         }
                                         
                                         // Try any button for submit if not found
@@ -1123,8 +1147,7 @@ function handleLoginTab(tabId, callback, callback_argument, username, password, 
                                 console.log("Total inputs:", result.analysis.totalInputs);
                                 console.log("Total buttons:", result.analysis.totalButtons);
                                 console.log("Total forms:", result.analysis.totalForms);
-                                console.log("Has password input:", result.analysis.hasPasswordInput);
-                                console.log("Has username input:", result.analysis.hasUsernameInput);
+                                // Login form analysis completed
                                 console.log("Clickable elements:", result.analysis.clickableElements);
                                 console.log("Body preview:", result.analysis.bodyPreview);
                                 console.log("=== END ANALYSIS ===");
