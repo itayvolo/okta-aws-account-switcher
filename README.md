@@ -22,6 +22,7 @@ A Chrome extension that allows you to easily switch between AWS accounts without
 - Automatic account detection and switching
 - Support for multiple AWS roles per account
 - Account status tracking (active/expired)
+- Account expiration functionality that logs out of AWS
 
 ## 📦 Installation
 
@@ -170,6 +171,10 @@ okta-aws-account-switcher/
 - ✅ Added smooth loading animations and transitions
 - ✅ Fixed duplicated loading indicators
 - ✅ Enhanced user experience with visual feedback
+- ✅ Fixed account expiration to actually log out of AWS
+- ✅ AWS SSO pages now stay open after account selection
+- ✅ Fixed UI layout issues and button text cutoff
+- ✅ Enhanced security analysis completed
 
 ### v5.0.0
 - ✅ Manifest V3 migration
@@ -189,6 +194,6 @@ This project is provided as-is for internal use. Please ensure compliance with y
 ---
 
 **Version**: 5.1.0  
-**Last Updated**: 2024  
+**Last Updated**: 2025
 **Chrome Extension**: Manifest V3  
 **Status**: ✅ Production Ready

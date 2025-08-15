@@ -100,8 +100,9 @@ body {
     background: var(--background);
     padding: 16px 20px;
     display: flex;
-    gap: 8px;
+    gap: 6px;
     border-bottom: 1px solid var(--border);
+    box-sizing: border-box;
 }
 
 #accounts_div {
@@ -125,11 +126,14 @@ body {
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 500;
-    padding: 10px 16px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
     margin: 0;
     transition: all 0.2s ease;
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #header_div button:hover {
@@ -387,9 +391,10 @@ div#settings_tab {
     display: inline-flex;
     flex-direction: column;
     margin: 0;
-    padding: 24px;
+    padding: 20px;
     background: var(--background);
     gap: 8px;
+    box-sizing: border-box;
 }
 .setting_name {
     font-size: 14px;
@@ -533,6 +538,7 @@ div.login_status span.green {
     border-radius: var(--radius);
     border: 1px solid rgba(220, 38, 38, 0.2);
     margin-bottom: 16px;
+    display: none; /* Hidden by default, only show when there's an error */
 }
 .okta_app {
     display: flex;
@@ -568,6 +574,10 @@ div.login_status span.green {
 .okta_aws_app span {
     font-weight: 500;
     font-size: 14px;
+}
+
+.okta_apps {
+    margin-top: 24px; /* Add spacing between AWS app section and OKTA Applications section */
 }
 
 /* === REFRESH ANIMATIONS === */

@@ -101,7 +101,7 @@ function get_all_accounts() {
                 });
             });
         }).catch((error) => {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
+            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
         });
     })
@@ -476,7 +476,7 @@ function login(account, callback) {
                             }, 3000);
                         }
                     }).catch((error) => {
-                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
                         safeSendMessage({"method": "UpdateAccountsStatus"});
                         clearInterval(console_timer);
                     });
@@ -605,36 +605,37 @@ function aws_login(callback) {
         
         // Now proceed with login after cookies are cleared
         chrome.storage.local.get(["settings"], function(storage){
-        console.log('aws_login loaded settings:', storage.settings);
-        if (storage.settings == undefined) {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found."}})
-            safeSendMessage({"method": "UpdateAccountsStatus"});
-            return;
-        } 
-        if (storage.settings.aws_app == undefined) {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "AWS app not set!"}})
-            safeSendMessage({"method": "UpdateAccountsStatus"});
-            return;
-        }
-        if (storage.settings.okta_domain == undefined) {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "OKTA domain not set!"}})
-            safeSendMessage({"method": "UpdateAccountsStatus"});
-            return;
-        };
-        var aws_saml_url = storage.settings.aws_app.url;
-        //Check okta login
-        const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs";
-        fetch(list_apps_url, {
-            method: 'GET',
-            credentials: 'include'
+            console.log('aws_login loaded settings:', storage.settings);
+            if (storage.settings == undefined) {
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found."}})
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                return;
+            } 
+            if (storage.settings.aws_app == undefined) {
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "AWS app not set!"}})
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                return;
+            }
+            if (storage.settings.okta_domain == undefined) {
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "OKTA domain not set!"}})
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                return;
+            };
+            var aws_saml_url = storage.settings.aws_app.url;
+            //Check okta login
+            const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs";
+            fetch(list_apps_url, {
+                method: 'GET',
+                credentials: 'include'
+            });
         }).then(response => {
             if (!response.ok) {
-                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing okta login"}})
+                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing okta login"}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 okta_login(aws_login, callback);
                 return;
             }
-            chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}})
+            chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
             chrome.tabs.create({"url": aws_saml_url, "selected": false}, function(tab) {
                 var signin_timer = setInterval(wait_signin, 1000);
@@ -648,13 +649,13 @@ function aws_login(callback) {
                         clearInterval(signin_timer);
                         callback(tab.id);
                     }).catch((error) => {
-                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
                         safeSendMessage({"method": "UpdateAccountsStatus"});
                     });
                 }
             });
         }).catch((error) => {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}})
+            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
         });
     });

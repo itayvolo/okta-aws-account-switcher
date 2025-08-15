@@ -5,9 +5,6 @@ function wakeUpServiceWorker() {
     return new Promise((resolve) => {
         // Try to wake up the service worker by accessing extension APIs
         chrome.storage.local.get(['_keepalive'], () => {
-            if (chrome.runtime.lastError) {
-                console.log('Service worker wake attempt:', chrome.runtime.lastError);
-            }
             resolve();
         });
     });
@@ -15,7 +12,6 @@ function wakeUpServiceWorker() {
 
 // Helper function to send messages with error handling
 function safeSendMessage(message, retries = 3) {
-    console.log('Attempting to send message:', message, 'Retries left:', retries);
     
     return new Promise(async (resolve, reject) => {
         // First, try to wake up the service worker
@@ -23,13 +19,10 @@ function safeSendMessage(message, retries = 3) {
         
         try {
             const response = await chrome.runtime.sendMessage(message);
-            console.log('Message sent successfully:', message.method);
             resolve(response);
         } catch (error) {
-            console.error('Error sending message:', message, error);
             
             if (error.message.includes('Could not establish connection') && retries > 0) {
-                console.log(`Retrying message after service worker wake up... (${retries} retries left)`);
                 // Wait longer and try to wake up service worker again
                 setTimeout(async () => {
                     await wakeUpServiceWorker();
@@ -90,12 +83,10 @@ function closeAllMenus() {
 
 async function load_popup() {
     // Test service worker connection on startup
-    console.log('Testing service worker connection...');
     try {
         await wakeUpServiceWorker();
-        console.log('Service worker connection established');
     } catch (error) {
-        console.error('Service worker connection failed:', error);
+        // Service worker connection failed
     }
     
     document.getElementById('get_accounts').addEventListener("click", get_all_accounts);
@@ -189,9 +180,7 @@ function load_aws_accounts() {
 
                 var account_div = document.createElement('div');
                 account_div.classList.add("account");
-                if (current_account + '/' + current_role === allKeys[i]){
-                    account_div.classList.add("select");
-                }
+                // No need to highlight currently active account - status shows this info
                 account_div.id = allKeys[i];
                 account_div.addEventListener("click", account_change);
                 row_div.appendChild(account_div);
@@ -369,33 +358,22 @@ function clear_aws_app() {
 function account_change(e) {
     // Don't trigger if clicking on menu button or dropdown
     if (e.target.closest('.menu_drop_btn') || e.target.closest('.drop_content')) {
-        console.log('Ignoring click on menu element');
         return;
     }
     
     var target = e.currentTarget;
     var account = target.id;
-    console.log('Account clicked:', account, 'Element:', target);
     
     if (!account) {
-        console.error('Account ID is missing!');
         return;
     }
     
-    console.log('Sending changeAccount message for:', account);
     
     safeSendMessage({"method": "changeAccount", "account": account})
         .then(() => {
-            console.log('changeAccount message sent successfully');
-            // Update UI only after successful message send
-            var account_divs = document.querySelectorAll('div.account');
-            for (i=0; i<account_divs.length; i++) {
-                account_divs[i].classList.remove("select");
-            }
-            target.classList.add("select");
+            // Account selection successful - UI will update automatically when status changes to "ready"
         })
         .catch((error) => {
-            console.error('Failed to send changeAccount message:', error);
             // Show user feedback about the error
             alert('Failed to switch account. Please try refreshing the extension.');
         });
@@ -406,7 +384,6 @@ function toggle_menu(e) {
     var target = e.currentTarget;
     var drop_div = target.parentElement.querySelector(".drop_content");
     
-    console.log('toggle_menu called', target, drop_div);
     
     // Close all other menus first
     const allDropdowns = document.querySelectorAll('.drop_content');
@@ -429,7 +406,6 @@ function toggle_menu(e) {
             drop_div.style.left = '0';
             drop_div.classList.add('show');
         }
-        console.log('Toggled menu, now has show class:', drop_div.classList.contains('show'));
     }
 }
 
@@ -465,12 +441,18 @@ function expire_account(e) {
     var account_name = e.currentTarget.closest(".row").querySelector("#account_name").innerText;
     var account_role = e.currentTarget.closest(".row").querySelector("#account_role").innerText;
     var account = account_name + '/' + account_role;
-    chrome.storage.local.get(["accounts"], function(result) {
-        if (result.accounts == undefined) {return}
-        if (result.accounts[account] == undefined) {return}
-        result.accounts[account].status = 'expired';
-        chrome.storage.local.set(result, function(){location.reload()});
-    });
+    
+    if (confirm(`Are you sure you want to expire and log out of account "${account_name}"?`)) {
+        
+        // Send message to background script to clear AWS cookies and expire account
+        safeSendMessage({"method": "expireAccount", "account": account})
+            .then(() => {
+                location.reload();
+            })
+            .catch((error) => {
+                alert('Failed to expire account. Please try refreshing the extension.');
+            });
+    }
 }
 
 function delete_account(e) {
