@@ -47,7 +47,7 @@ A Chrome extension that allows you to easily switch between AWS accounts without
 
 5. **Pin the Extension**
    - Click the puzzle piece icon in Chrome toolbar
-   - Pin "AWS AccountSwitcher" for easy access
+   - Pin "Okta - AWS Account Switcher" for easy access
 
 ## ⚙️ Configuration
 

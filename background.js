@@ -1661,7 +1661,7 @@ function monitorOktaLogin(tabId, callback, callback_argument) {
                 // Show success notification
                 chrome.notifications.create({
                     type: 'basic',
-                    iconUrl: 'Icons/icon_48.png',
+                    iconUrl: 'Icons/aws-logo.png',
                     title: 'AWS Account Switcher',
                     message: 'Login successful! Applications loading...'
                 });
@@ -2396,7 +2396,7 @@ function makeOktaApiCall(tabId, apiUrl, closeTab = false, callback = null, retry
                 const appCount = result.data.reduce((total, tab) => total + (tab._embedded?.items?.length || 0), 0);
                 chrome.notifications.create({
                     type: 'basic',
-                    iconUrl: 'Icons/icon_48.png',
+                    iconUrl: 'Icons/aws-logo.png',
                     title: 'AWS Account Switcher',
                     message: `Ready! Loaded ${appCount} applications.`
                 });

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
    
-    "name": "AWS AccountSwitcher",
+    "name": "Okta - AWS Account Switcher",
     "version": "5.1.0",
     "description": "The tool to switch AWS account without login",
 
@@ -35,6 +35,6 @@
     },
 
     "icons": {
-      "48": "Icons/icon_48.png"
+      "48": "Icons/aws-logo.png"
     }
 }
