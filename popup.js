@@ -94,6 +94,7 @@ async function load_popup() {
     document.getElementById('okta_login').addEventListener("click", okta_login);
     document.getElementById('okta_apps_refresh').addEventListener("click", load_okta_apps);
     document.getElementById('refresh-button').addEventListener("click", refreshExtension);
+    document.getElementById('reset_login_state').addEventListener("click", resetLoginState);
 
 
     document.getElementById("accounts_tab").addEventListener("click", tab_click);
@@ -768,4 +769,38 @@ function resetUIElements() {
     if (refreshButton) {
         refreshButton.disabled = false;
     }
+}
+
+function resetLoginState() {
+    const resetButton = document.getElementById('reset_login_state');
+    const originalText = resetButton.innerHTML;
+    
+    // Show loading state
+    resetButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
+    resetButton.disabled = true;
+    
+    // Clear stuck login states and any stale authentication data from storage
+    chrome.storage.local.remove([
+        "accounts_status",
+        "login_status",
+        "okta_apps_status"
+    ], function() {
+        // Reset UI elements immediately
+        resetUIElements();
+        
+        // Update status displays
+        update_accounts_status();
+        update_login_status();
+        
+        // Reset button state
+        setTimeout(() => {
+            resetButton.innerHTML = originalText;
+            resetButton.disabled = false;
+        }, 500);
+        
+        // Optionally reload accounts tab if currently visible
+        if (document.querySelector("div#accounts_tab").style.display === "block") {
+            location.reload();
+        }
+    });
 }
