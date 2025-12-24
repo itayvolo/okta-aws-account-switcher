@@ -29,72 +29,203 @@ body {
     line-height: 1.5;
 }
 
-#refresh-button {
-    background: var(--danger-color) !important;
-    color: white !important;
-    font-weight: 600 !important;
-    font-size: 13px !important;
-    transition: all 0.2s ease !important;
+/* Header */
+header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
 }
 
-#refresh-button:hover {
-    background: #b91c1c !important;
-    transform: translateY(-1px) !important;
-} 
-/* Modern tab styling */
-.tab {
+#version-info {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+/* Settings Section */
+#settings_section {
     width: 400px;
+    display: inline-flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    background: var(--background);
+    gap: 0;
+    box-sizing: border-box;
+}
+
+/* Collapsible Header */
+.collapsible-header {
     display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    cursor: pointer;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 0;
+    transition: background 0.2s ease;
 }
 
-.tab button {
-    flex: 1;
-    border: none;
-    outline: none;
-    cursor: pointer;
-    padding: 16px 20px;
-    transition: all 0.2s ease;
-    color: var(--text-secondary);
-    background: transparent;
-    font-size: 14px;
-    font-weight: 500;
-    position: relative;
-    border-bottom: 2px solid transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-
-.tab button i {
-    font-size: 16px;
-}
-
-.tab button span {
-    font-size: 14px;
-    font-weight: 500;
-}
-
-.tab button:hover {
-    color: var(--primary-color);
+.collapsible-header:hover {
     background: var(--surface-hover);
 }
 
-.tab button.active {
-    color: var(--primary-color);
-    background: var(--background);
-    border-bottom-color: var(--primary-color);
+#settings_title {
+    font-size: 14px;
     font-weight: 600;
+    color: var(--text-primary);
 }
-/* Style the tab content */
-.tabcontent {
-    position: relative;
+
+#settings_chevron {
+    color: var(--text-secondary);
+    transition: transform 0.3s ease;
+    font-size: 12px;
+}
+
+#settings_section.collapsed #settings_chevron {
+    transform: rotate(-90deg);
+}
+
+/* Collapsible Content */
+.collapsible-content {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px;
+    gap: 8px;
+    overflow: hidden;
+    max-height: 500px;
+    transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
+    opacity: 1;
+}
+
+#settings_section.collapsed .collapsible-content {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+}
+
+/* Login Status - Always visible */
+#login_status_div {
+    padding: 0 20px 12px 20px;
+}
+
+.setting_name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    display: block;
+}
+
+.setting_hint {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.text_setting_value {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-family: inherit;
+    transition: all 0.2s ease;
+    margin-bottom: 16px;
+    background: var(--background);
+    color: var(--text-primary);
+    box-sizing: border-box;
+}
+
+.text_setting_value:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.text_setting_value::placeholder {
+    color: var(--text-secondary);
+}
+
+/* Login Button */
+div.login {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+}
+
+button#okta_login {
+    background: var(--primary-color);
+    border: 1px solid var(--primary-color);
+    outline: none;
+    cursor: pointer;
+    padding: 12px 24px;
+    transition: all 0.2s ease;
+    color: white;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 120px;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+button#okta_login:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lg);
+}
+
+button#okta_login:disabled {
+    background: var(--secondary-color);
+    color: white;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: var(--shadow);
+}
+
+/* Login Status */
+div.login_status {
+    margin: 8px 0 0 0;
     display: none;
-    border-top: none;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--border);
 }
+
+div.login_status span {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+div.login_status span.red {
+    color: var(--danger-color);
+}
+
+div.login_status span.green {
+    color: var(--success-color);
+}
+
+/* Section Divider */
+.section-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0;
+}
+
+/* Accounts Section */
+#accounts_section {
+    position: relative;
+}
+
 #header_div {
     width: 400px;
     background: var(--background);
@@ -103,20 +234,6 @@ body {
     gap: 6px;
     border-bottom: 1px solid var(--border);
     box-sizing: border-box;
-}
-
-#accounts_div {
-    width: 400px;
-    max-height: 500px;
-    min-height: 300px;
-    overflow-y: auto;
-    overflow-x: visible;
-    background: var(--background);
-    padding: 16px 0;
-}
-
-.row:first-child {
-    margin-top: 0;
 }
 
 #header_div button {
@@ -143,6 +260,18 @@ body {
     transform: translateY(-1px);
     box-shadow: var(--shadow);
 }
+
+#accounts_div {
+    width: 400px;
+    max-height: 400px;
+    min-height: 200px;
+    overflow-y: auto;
+    overflow-x: visible;
+    background: var(--background);
+    padding: 16px 0;
+}
+
+/* Account Rows */
 .row {
     display: flex;
     align-items: stretch;
@@ -153,6 +282,10 @@ body {
     transition: all 0.2s ease;
     overflow: visible;
     position: relative;
+}
+
+.row:first-child {
+    margin-top: 0;
 }
 
 .row:hover {
@@ -170,7 +303,8 @@ body {
     transition: all 0.2s ease;
     position: relative;
 }
-/* Menu container positioning */
+
+/* Menu Button */
 .row > div[style*="position: relative"] {
     display: flex;
     align-items: center;
@@ -197,7 +331,8 @@ body {
     color: var(--primary-color);
     border-color: var(--primary-color);
 }
-/* Modern dropdown menu */
+
+/* Dropdown Menu */
 .drop_content {
     position: absolute;
     top: calc(100% + 4px);
@@ -274,17 +409,17 @@ body {
     font-weight: 500;
 }
 
-/* Delete menu option specific styling */
 .menu_option.delete-option:hover {
     background: rgba(220, 38, 38, 0.1);
     color: var(--danger-color);
 }
 
-/* Expire menu option specific styling */
 .menu_option.expire-option:hover {
     background: rgba(217, 119, 6, 0.1);
     color: var(--warning-color);
 }
+
+/* Account Info */
 #account_name_role {
     flex: 1;
     display: flex;
@@ -312,20 +447,6 @@ body {
     align-items: flex-end;
     gap: 6px;
     margin-left: 16px;
-}
-.account.select {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
-    color: white;
-}
-
-.account.select #account_name,
-.account.select #account_role {
-    color: white;
-}
-
-.account.select:hover {
-    background: linear-gradient(135deg, var(--primary-hover), var(--primary-color));
-    transform: none;
 }
 
 #status {
@@ -359,322 +480,127 @@ body {
     font-weight: 500;
 }
 
-/* Removed account hover to prevent dropdown interference */
+/* Loading Overlay */
 #accounts_load {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(248, 250, 252, 0.95);
-    backdrop-filter: blur(4px);
+    background: rgba(248, 250, 252, 0.97);
+    backdrop-filter: blur(8px);
     display: none;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     z-index: 100;
-}
-
-#accounts_load i {
-    color: var(--primary-color);
-    margin-bottom: 16px;
+    gap: 20px;
 }
 
 #accounts_load span {
     color: var(--text-secondary);
     font-weight: 500;
     text-align: center;
+    font-size: 13px;
+    letter-spacing: 0.3px;
 }
 
-div#settings_tab {
-    width: 400px;
-    display: inline-flex;
-    flex-direction: column;
-    margin: 0;
-    padding: 20px;
-    background: var(--background);
-    gap: 8px;
-    box-sizing: border-box;
-}
-.setting_name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 6px;
-    display: block;
+/* Modern Loader */
+.modern-loader {
+    position: relative;
+    width: 48px;
+    height: 48px;
 }
 
-.setting_name_with_button {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-}
-
-.text_setting_value {
+.loader-ring {
+    position: absolute;
     width: 100%;
-    padding: 12px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-family: inherit;
-    transition: all 0.2s ease;
-    margin-bottom: 16px;
-    background: var(--background);
-    color: var(--text-primary);
+    height: 100%;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--primary-color);
+    border-right-color: rgba(37, 99, 235, 0.3);
+    border-bottom-color: rgba(37, 99, 235, 0.1);
+    border-left-color: rgba(37, 99, 235, 0.2);
+    animation: loader-spin 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
 }
 
-.text_setting_value:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+.loader-ring::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: rgba(37, 99, 235, 0.5);
+    animation: loader-spin 0.8s linear infinite reverse;
 }
 
-.text_setting_value::placeholder {
-    color: var(--text-secondary);
-}
-div.login {
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    margin-top: 8px;
-}
-
-button.login {
+.loader-ring::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    margin: -4px 0 0 -4px;
     background: var(--primary-color);
-    border: 1px solid var(--primary-color);
-    outline: none;
-    cursor: pointer;
-    padding: 12px 24px;
-    transition: all 0.2s ease;
-    color: white;
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-weight: 600;
-    min-width: 120px;
-    box-shadow: var(--shadow);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    border-radius: 50%;
+    animation: loader-pulse 1s ease-in-out infinite;
 }
 
-button.login:hover {
-    background: var(--primary-hover);
-    border-color: var(--primary-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-lg);
+@keyframes loader-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
-button.login:disabled {
-    background: var(--secondary-color);
-    color: white;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: var(--shadow);
-}
-div.login_status {
-    margin: 8px 20px 16px 20px;
-    display: none;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    background: var(--surface);
-    border: 1px solid var(--border);
+@keyframes loader-pulse {
+    0%, 100% {
+        transform: scale(0.8);
+        opacity: 0.5;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
 }
 
-div.login_status span {
-    font-size: 14px;
-    font-weight: 500;
-}
-
-div.login_status span.red {
-    color: var(--danger-color);
-}
-
-div.login_status span.green {
-    color: var(--success-color);
-}
-#okta_apps_load { 
-    display: none;
-    justify-content: center;
-    color: #16191f;
-}
-.okta_aws_app {
-    display: flex;
-    color: #16191f;
-    flex-direction: row;
-    align-self: stretch;
-    align-items: center;
-    justify-content: space-between;
-}
-.small_button {
-    border: 1px solid var(--border);
-    outline: none;
-    cursor: pointer;
-    background: var(--surface);
-    color: var(--text-secondary);
-    transition: all 0.2s ease;
-    padding: 8px 12px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-}
-
-.small_button:hover {
-    background: var(--surface-hover);
-    color: var(--primary-color);
-    border-color: var(--primary-color);
-}
-#aws_app_status {
-    color: var(--danger-color);
-    font-size: 13px;
-    background: rgba(220, 38, 38, 0.05);
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    border: 1px solid rgba(220, 38, 38, 0.2);
-    margin-bottom: 16px;
-}
-
-#aws_app_list_status {
-    color: var(--danger-color);
-    font-size: 13px;
-    background: rgba(220, 38, 38, 0.05);
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    border: 1px solid rgba(220, 38, 38, 0.2);
-    margin-bottom: 16px;
-    display: none; /* Hidden by default, only show when there's an error */
-}
-.okta_app {
-    display: flex;
-    background: var(--surface);
-    color: var(--text-primary);
-    flex-direction: row;
-    align-items: center;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    padding: 12px 16px;
-    margin-bottom: 8px;
-}
-
-.okta_app:hover {
-    background: var(--surface-hover);
-    border-color: var(--primary-color);
-    color: var(--primary-color);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow);
-}
-.okta_aws_app img,
-.okta_app img {
-    max-width: 32px;
-    max-height: 32px;
-    margin-right: 12px;
-    border-radius: var(--radius-sm);
-    object-fit: cover;
-}
-
-.okta_app span,
-.okta_aws_app span {
-    font-weight: 500;
-    font-size: 14px;
-}
-
-.login {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 10px;
-}
-
-.reset_button {
-    background: var(--warning-color);
-    color: white;
-    border: 1px solid var(--warning-color);
-    border-radius: var(--radius);
-    padding: 12px 16px;
-    font-weight: 500;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    gap: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    outline: none;
-    margin-bottom: 10px;
-}
-
-.reset_button:hover {
-    background: #b45309;
-    border-color: #b45309;
-    transform: translateY(-1px);
-    box-shadow: var(--shadow);
-}
-
-.reset_button:disabled {
-    background: var(--text-secondary);
-    border-color: var(--text-secondary);
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-
-.okta_apps {
-    margin-top: 24px; /* Add spacing between AWS app section and OKTA Applications section */
-}
-
-/* === REFRESH ANIMATIONS === */
-
-/* Spinner animation for loading states */
+/* Animations */
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
 
-/* Pulse animation for progress indicators */
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
 
-/* Fade in animation */
 @keyframes fadeIn {
     0% { opacity: 0; transform: translateY(-10px); }
     100% { opacity: 1; transform: translateY(0); }
 }
 
-/* Loading spinner class */
 .loading-spinner {
-    animation: spin 1s linear infinite;
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s ease-in-out infinite;
 }
 
-/* Pulse animation class */
 .loading-pulse {
     animation: pulse 1.5s ease-in-out infinite;
 }
 
-/* Fade in class */
 .fade-in {
     animation: fadeIn 0.3s ease-out;
 }
 
-/* Refresh button animation when active */
-#refresh-button.refreshing {
-    animation: spin 1s linear infinite;
-    pointer-events: none;
-    opacity: 0.7;
-}
-
-/* OKTA apps refresh button animation */
-#okta_apps_refresh.refreshing {
-    animation: spin 1s linear infinite;
-    pointer-events: none;
-    opacity: 0.7;
-}
-
-/* Loading states with better visual feedback */
 .loading-state {
     position: relative;
     opacity: 0.7;
@@ -690,7 +616,7 @@ div.login_status span.green {
     height: 16px;
     margin: -8px 0 0 -8px;
     border: 2px solid #f3f3f3;
-    border-top: 2px solid #dd6b10;
+    border-top: 2px solid var(--primary-color);
     border-radius: 50%;
     animation: spin 1s linear infinite;
     z-index: 10;
