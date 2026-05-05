@@ -93,20 +93,27 @@ function autoDetectAwsApp(okta_data) {
     // Handle different response structures from Okta API
     let allApps = [];
 
+    const collectFromTab = tab => {
+        if (Array.isArray(tab.apps)) {
+            allApps = allApps.concat(tab.apps);
+        }
+        // Expanded format from ?expand=items,items.resource: each tab has `items`,
+        // and each item has the app metadata under `.resource`.
+        if (Array.isArray(tab.items)) {
+            tab.items.forEach(it => allApps.push(it.resource || it));
+        }
+    };
+
     if (Array.isArray(okta_data)) {
-        // Could be array of tabs (each with apps property) or direct array of apps
         okta_data.forEach(item => {
-            if (item.apps && Array.isArray(item.apps)) {
-                // This is a tab object with apps array
-                allApps = allApps.concat(item.apps);
+            if (Array.isArray(item.apps) || Array.isArray(item.items)) {
+                collectFromTab(item);
             } else if (item.linkUrl || item.label) {
-                // This item itself looks like an app
                 allApps.push(item);
             }
         });
-    } else if (okta_data.apps && Array.isArray(okta_data.apps)) {
-        // Single object with apps array
-        allApps = okta_data.apps;
+    } else if (okta_data && (Array.isArray(okta_data.apps) || Array.isArray(okta_data.items))) {
+        collectFromTab(okta_data);
     }
 
     debugLog("Total apps found:", allApps.length);
@@ -361,40 +368,65 @@ function safeSendMessage(message) {
 function get_all_accounts() {
     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
     safeSendMessage({"method": "UpdateAccountsStatus"});
-    aws_login(function(tab_id){
-        chrome.scripting.executeScript({
-            target: {tabId: tab_id},
-            files: ['get_accounts.js']
-        }).then((results) => {
-            const accounts = results[0].result;
-            if (!accounts) {
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Failed to get accounts"}})
-                safeSendMessage({"method": "UpdateAccountsStatus"});
-                return;
-            }
-            chrome.storage.local.get(["accounts"], accounts_storage => {
-                if (accounts_storage.accounts === undefined) {
-                    accounts_storage.accounts = {};
-                }
-                chrome.storage.local.get(["settings"], settings_storage => {
-                    if (settings_storage.settings === undefined) {settings_storage.settings = {}}
-                    if (settings_storage.settings.role_filters === undefined) {settings_storage.settings.role_filters = []}
-                    var role_filters = settings_storage.settings.role_filters;
-                    accounts.forEach(account => {
-                        var matches = account.name.match(/Account: (.+) \(([0-9]+)\)/);
+    aws_login(function(tab_id, portalHost){
+        chrome.storage.local.get(["settings"], settings_storage => {
+            const flow_mode = (settings_storage.settings && settings_storage.settings.aws_flow_mode) || "access_portal";
+            const is_portal = flow_mode === "access_portal";
+            const inject = is_portal
+                ? { target: {tabId: tab_id}, files: ['get_accounts_portal.js'] }
+                : { target: {tabId: tab_id}, files: ['get_accounts.js'] };
+
+            chrome.scripting.executeScript(inject).then((results) => {
+                const raw = results[0].result;
+                let parsed;
+                if (is_portal) {
+                    if (!raw || raw.error || !raw.accounts) {
+                        const msg = raw && raw.error ? `Failed to get accounts: ${raw.error}` : "Failed to get accounts";
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": msg}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
+                        return;
+                    }
+                    parsed = raw.accounts.map(a => ({
+                        account_name: a.accountName + '/' + a.roleName,
+                        account_id: a.accountId,
+                        role: a.roleName,
+                    }));
+                } else {
+                    if (!raw) {
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Failed to get accounts"}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
+                        return;
+                    }
+                    parsed = [];
+                    raw.forEach(account => {
+                        const matches = account.name.match(/Account: (.+) \(([0-9]+)\)/);
                         if (!matches || matches.length < 3) {
                             console.error('Failed to parse account name:', account.name);
-                            return; // Skip this account
+                            return;
                         }
-                        var account_name = matches[1] + '/' + account.role;
-                        var account_id = matches[2];
-                        if (role_filters.length > 0 && role_filters.indexOf(account.role) === -1) {
-                            if (accounts_storage.accounts[account_name] !== undefined) {
-                                delete accounts_storage.accounts[account_name];
+                        parsed.push({
+                            account_name: matches[1] + '/' + account.role,
+                            account_id: matches[2],
+                            role: account.role,
+                        });
+                    });
+                }
+
+                chrome.storage.local.get(["accounts"], accounts_storage => {
+                    if (accounts_storage.accounts === undefined) {
+                        accounts_storage.accounts = {};
+                    }
+                    if (settings_storage.settings === undefined) {settings_storage.settings = {}}
+                    if (settings_storage.settings.role_filters === undefined) {settings_storage.settings.role_filters = []}
+                    const role_filters = settings_storage.settings.role_filters;
+                    parsed.forEach(a => {
+                        if (role_filters.length > 0 && role_filters.indexOf(a.role) === -1) {
+                            if (accounts_storage.accounts[a.account_name] !== undefined) {
+                                delete accounts_storage.accounts[a.account_name];
                             }
                         } else {
-                            if (accounts_storage.accounts[account_name] === undefined) {
-                                accounts_storage.accounts[account_name] = {"id": account_id, "status": "expired"};
+                            if (accounts_storage.accounts[a.account_name] === undefined) {
+                                accounts_storage.accounts[a.account_name] = {"id": a.account_id, "status": "expired"};
                             }
                         }
                     });
@@ -404,10 +436,10 @@ function get_all_accounts() {
                     chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Successfully retrieved the list of AWS accounts."}})
                     safeSendMessage({"method": "UpdatePopup"});
                 });
+            }).catch((error) => {
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
+                safeSendMessage({"method": "UpdateAccountsStatus"});
             });
-        }).catch((error) => {
-            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
-            safeSendMessage({"method": "UpdateAccountsStatus"});
         });
     })
 }
@@ -634,10 +666,123 @@ function login(account, callback) {
         var account_role = account.split('/')[1];
         debugLog(`Extracted account info: id="${account_id}", name="${account_name}", role="${account_role}"`);
         
-        aws_login(function(tab_id){
-            debugLog('aws_login callback called with tab_id:', tab_id);
+        aws_login(function(tab_id, portalHost){
+            debugLog('aws_login callback called with tab_id:', tab_id, 'portalHost:', portalHost);
             chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Selecting account..."}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
+
+            const startWaitConsole = () => {
+                debugLog('Starting wait_console timer for tab:', tab_id);
+                var console_timer = setInterval(wait_console, 1000);
+                var console_check_count = 0;
+                function wait_console() {
+                    console_check_count++;
+                    chrome.tabs.get(tab_id, function(tab) {
+                        if (chrome.runtime.lastError) {
+                            console.log('[AWS Switcher] Tab error:', chrome.runtime.lastError.message);
+                            if (console_check_count > 30) {
+                                console.log('[AWS Switcher] Timeout waiting for console');
+                                clearInterval(console_timer);
+                            }
+                            return;
+                        }
+                        const tab_url = tab.url;
+                        console.log('[AWS Switcher] Checking tab URL:', tab_url);
+                        if (tab_url && tab_url.includes("console.aws.amazon.com")) {
+                            clearInterval(console_timer);
+                            console.log('[AWS Switcher] AWS console loaded:', tab_url);
+                            setTimeout(() => {
+                                save(true, function(){
+                                    callback();
+                                }, account);
+                            }, 2000);
+                        } else if (console_check_count > 30) {
+                            console.log('[AWS Switcher] Timeout waiting for console after 30 checks');
+                            clearInterval(console_timer);
+                            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Timeout waiting for AWS console"}});
+                            safeSendMessage({"method": "UpdateAccountsStatus"});
+                        }
+                    });
+                }
+            };
+
+            if (portalHost) {
+                // Access Portal mode: find the role's federation link in the SPA and click it.
+                // The SPA intercepts the click and calls window.open(<federation-url>, '_blank'),
+                // so we run in the page's main world and override window.open to navigate
+                // in-place — that way wait_console keeps tracking the same tab.
+                debugLog('Access Portal mode, clicking role link for', account_id, account_role);
+                chrome.scripting.executeScript({
+                    target: {tabId: tab_id},
+                    world: 'MAIN',
+                    func: async (account_id, account_role) => {
+                        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+                        // Override window.open so the SPA's window.open(url, '_blank') navigates this tab.
+                        window.open = function(url) {
+                            if (url) {
+                                try { window.location.href = url; } catch (e) {}
+                            }
+                            return null;
+                        };
+
+                        // Locate the account row by its visible account-id text.
+                        const accountRows = document.querySelectorAll('tr[aria-level="1"]');
+                        let targetRow = null;
+                        for (const row of accountRows) {
+                            const idEl = row.querySelector('[data-testid="account-federation-link"]');
+                            if (idEl && idEl.textContent.trim() === account_id) {
+                                targetRow = row;
+                                break;
+                            }
+                        }
+                        if (!targetRow) {
+                            return { ok: false, error: 'account row not found for id ' + account_id };
+                        }
+
+                        // Expand the account if collapsed so the role link exists in the DOM.
+                        const toggle = targetRow.querySelector('button[aria-expanded]');
+                        if (toggle && toggle.getAttribute('aria-expanded') === 'false') {
+                            toggle.click();
+                            for (let i = 0; i < 20; i++) {
+                                await sleep(100);
+                                if (toggle.getAttribute('aria-expanded') === 'true') break;
+                            }
+                            await sleep(200);
+                        }
+
+                        // Find the federation link matching account_id + role_name.
+                        const links = document.querySelectorAll('a[data-testid="federation-link"]');
+                        for (const link of links) {
+                            const href = link.getAttribute('href') || '';
+                            if (href.includes('account_id=' + account_id) && href.includes('role_name=' + account_role)) {
+                                link.removeAttribute('target');
+                                link.removeAttribute('rel');
+                                link.click();
+                                return { ok: true };
+                            }
+                        }
+                        return { ok: false, error: 'role link not found for ' + account_id + '/' + account_role };
+                    },
+                    args: [account_id, account_role]
+                }).then((results) => {
+                    const r = results[0].result;
+                    if (!r || !r.ok) {
+                        debugLog('Portal role click failed:', r);
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Could not click role in portal: " + (r && r.error ? r.error : "unknown")}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
+                        return;
+                    }
+                    debugLog('Portal role click dispatched, waiting for console...');
+                    startWaitConsole();
+                }).catch((error) => {
+                    debugLog('Portal click error:', error.message);
+                    chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Portal click error: " + error.message}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                });
+                return;
+            }
+
             debugLog('Executing account selection script on tab:', tab_id);
             chrome.scripting.executeScript({
                 target: {tabId: tab_id},
@@ -842,46 +987,7 @@ function login(account, callback) {
                     console.log('[AWS Switcher] Sign-in button not found but account was selected, continuing...');
                 }
 
-                console.log('[AWS Switcher] Starting wait_console timer for tab:', tab_id);
-                var console_timer = setInterval(wait_console, 1000);
-                var console_check_count = 0;
-                function wait_console() {
-                    console_check_count++;
-                    // Use chrome.tabs.get to check URL instead of executeScript (more reliable during navigation)
-                    chrome.tabs.get(tab_id, function(tab) {
-                        if (chrome.runtime.lastError) {
-                            console.log('[AWS Switcher] Tab error:', chrome.runtime.lastError.message);
-                            // Tab might be closed or navigating, keep trying
-                            if (console_check_count > 30) {
-                                console.log('[AWS Switcher] Timeout waiting for console');
-                                clearInterval(console_timer);
-                            }
-                            return;
-                        }
-                        const tab_url = tab.url;
-                        console.log('[AWS Switcher] Checking tab URL:', tab_url);
-                        if (tab_url && tab_url.includes("console.aws.amazon.com")) {
-                            clearInterval(console_timer);
-                            console.log('[AWS Switcher] AWS console loaded:', tab_url);
-                            console.log('[AWS Switcher] Account to update:', account, 'with ID:', account_id);
-                            console.log('[AWS Switcher] Waiting 2 seconds for cookies...');
-                            // Wait for AWS console to fully load the correct account before saving cookies
-                            setTimeout(() => {
-                                console.log('[AWS Switcher] Now calling save() for account:', account);
-                                save(true, function(){
-                                    console.log('[AWS Switcher] save() callback completed for:', account);
-                                    // Don't close AWS console tabs - let user manage them
-                                    callback();
-                                }, account);
-                            }, 2000);
-                        } else if (console_check_count > 30) {
-                            console.log('[AWS Switcher] Timeout waiting for console after 30 checks');
-                            clearInterval(console_timer);
-                            chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Timeout waiting for AWS console"}});
-                            safeSendMessage({"method": "UpdateAccountsStatus"});
-                        }
-                    });
-                }
+                startWaitConsole();
             }).catch((error) => {
                 console.error('Script execution failed:', error);
                 console.error('Error details:', error.message);
@@ -1018,20 +1124,27 @@ function aws_login(callback) {
         chrome.storage.local.get(["settings"], function(storage){
             // Settings loaded successfully
             if (storage.settings === undefined) {
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found."}})
-                safeSendMessage({"method": "UpdateAccountsStatus"});
-                return;
-            }
-            if (storage.settings.aws_app === undefined) {
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "AWS app not set!"}})
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Settings not found. Open Settings and fill in your Okta details."}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 return;
             }
             if (storage.settings.okta_domain === undefined) {
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "OKTA domain not set!"}})
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "OKTA domain not set. Fill in 'OKTA Domain' in Settings."}})
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 return;
-            };
+            }
+            if (storage.settings.aws_app === undefined) {
+                // Try to auto-detect by running the Okta login flow if credentials are stored.
+                if (storage.settings.okta_username && storage.settings.okta_password) {
+                    chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Detecting AWS app via Okta login..."}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    okta_login(() => {}, null);
+                    return;
+                }
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "AWS app not set. Click Login first to auto-detect, or use 'edit' next to AWS App URL to paste it manually."}})
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                return;
+            }
             var aws_saml_url = storage.settings.aws_app.url;
             //Check okta login
             const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs";
@@ -1047,6 +1160,7 @@ function aws_login(callback) {
                 }
                 chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
+                var flow_mode = storage.settings.aws_flow_mode || "access_portal";
                 chrome.tabs.create({"url": aws_saml_url, "selected": false}, function(tab) {
                     if (checkLastError('tabs.create aws_saml_url') || !tab) {
                         chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Failed to create AWS login tab"}});
@@ -1057,12 +1171,18 @@ function aws_login(callback) {
                     function wait_signin(){
                         chrome.scripting.executeScript({
                             target: {tabId: tab.id},
-                            func: () => {
-                                // Check if we're on the SAML page AND the page content is loaded
+                            func: (mode) => {
+                                if (mode === "access_portal") {
+                                    const m = window.location.href.match(/^https:\/\/([^\/]+\.awsapps\.com)\/start/);
+                                    if (!m) {
+                                        return { ready: false, url: window.location.href };
+                                    }
+                                    return { ready: true, url: window.location.href, portalHost: m[1] };
+                                }
+                                // Classic SAML
                                 if (window.location.href !== "https://signin.aws.amazon.com/saml") {
                                     return { ready: false, url: window.location.href };
                                 }
-                                // Check if the account selection elements are present
                                 const accountContainers = document.querySelectorAll('.saml-account');
                                 const signinButton = document.getElementById('signin_button');
                                 const ready = accountContainers.length > 0 && signinButton !== null;
@@ -1072,16 +1192,39 @@ function aws_login(callback) {
                                     accountCount: accountContainers.length,
                                     hasSigninButton: signinButton !== null
                                 };
-                            }
+                            },
+                            args: [flow_mode]
                         }).then((results) => {
                             const result = results[0].result;
                             if (!result || !result.ready) {
-                                debugLog("SAML page not ready yet:", result);
+                                debugLog("AWS login page not ready yet:", result);
+                                return;
+                            }
+                            if (flow_mode === "access_portal") {
+                                // Wait for the SPA's accounts table to render.
+                                chrome.scripting.executeScript({
+                                    target: {tabId: tab.id},
+                                    func: () => {
+                                        const cell = document.querySelector('[data-testid="account-list-cell"]');
+                                        const idLink = document.querySelector('[data-testid="account-federation-link"]');
+                                        return { ok: !!(cell && idLink) };
+                                    }
+                                }).then((probeResults) => {
+                                    const probe = probeResults[0].result;
+                                    if (!probe || !probe.ok) {
+                                        debugLog("Portal table not rendered yet");
+                                        return;
+                                    }
+                                    debugLog("Portal table ready, host:", result.portalHost);
+                                    clearInterval(signin_timer);
+                                    setTimeout(() => callback(tab.id, result.portalHost), 500);
+                                }).catch((error) => {
+                                    debugLog("Portal probe error:", error.message);
+                                });
                                 return;
                             }
                             debugLog("SAML page ready with", result.accountCount, "accounts");
                             clearInterval(signin_timer);
-                            // Small delay to ensure DOM is fully interactive
                             setTimeout(() => callback(tab.id), 500);
                         }).catch((error) => {
                             clearInterval(signin_timer);

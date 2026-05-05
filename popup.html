@@ -20,14 +20,19 @@
         <i id="settings_chevron" class="fas fa-chevron-down"></i>
       </div>
       <div id="settings_content" class="collapsible-content">
+        <span class="setting_name">AWS Login Flow</span>
+        <select class="text_setting_value" id="aws_flow_mode">
+          <option value="access_portal">AWS Access Portal (awsapps.com)</option>
+          <option value="classic_saml">Classic SAML (signin.aws.amazon.com)</option>
+        </select>
         <span class="setting_name">OKTA Domain</span>
         <input spellcheck="false" class="text_setting_value" id="okta_domain" placeholder="company.okta.com"/>
         <span class="setting_name">OKTA Username</span>
         <input spellcheck="false" class="text_setting_value" id="okta_username" placeholder="username"/>
         <span class="setting_name">OKTA Password</span>
         <input type="password" class="text_setting_value" id="okta_password" placeholder="password"/>
-        <span class="setting_name">AWS App URL <span class="setting_hint">(auto-detected)</span></span>
-        <input spellcheck="false" class="text_setting_value" id="aws_app_url" placeholder="https://company.okta.com/home/amazon_aws/..."/>
+        <span class="setting_name">AWS App URL <span class="setting_hint">(auto-detected)</span> <a href="#" class="setting_edit_toggle" id="aws_app_url_edit">edit</a></span>
+        <input spellcheck="false" class="text_setting_value" id="aws_app_url" placeholder="https://company.okta.com/home/amazon_aws/..." readonly/>
         <div class="login">
           <button id="okta_login">
             <span>Login</span>

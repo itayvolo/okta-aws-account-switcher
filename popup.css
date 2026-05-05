@@ -126,6 +126,30 @@ header {
     color: var(--text-secondary);
 }
 
+.setting_edit_toggle {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--primary-color);
+    margin-left: 4px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.setting_edit_toggle:hover {
+    text-decoration: underline;
+}
+
+.text_setting_value[readonly] {
+    background: var(--background);
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+.text_setting_value[readonly]:focus {
+    border-color: var(--border);
+    box-shadow: none;
+}
+
 .text_setting_value {
     width: 100%;
     padding: 12px 16px;
@@ -323,6 +347,7 @@ div.login_status span.green {
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all 0.2s ease;
+    margin-left: 8px;
     margin-right: 12px;
 }
 
@@ -347,7 +372,7 @@ div.login_status span.green {
     opacity: 0;
     visibility: hidden;
     transform: translateY(-8px);
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
     pointer-events: none;
 }
 
@@ -503,6 +528,15 @@ div.login_status span.green {
     text-align: center;
     font-size: 13px;
     letter-spacing: 0.3px;
+}
+
+#accounts_load.error span {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+#accounts_load.error .modern-loader {
+    display: none;
 }
 
 /* Modern Loader */

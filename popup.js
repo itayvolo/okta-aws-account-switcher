@@ -114,13 +114,25 @@ async function load_popup() {
     document.getElementById("okta_domain").addEventListener("focusout", save_setting);
     document.getElementById("okta_username").addEventListener("focusout", save_setting);
     document.getElementById("okta_password").addEventListener("focusout", save_setting);
-    document.getElementById("aws_app_url").addEventListener("focusout", save_aws_app_url);
+    document.getElementById("aws_app_url").addEventListener("focusout", function(e) {
+        save_aws_app_url(e);
+        e.currentTarget.setAttribute("readonly", "");
+    });
+    document.getElementById("aws_app_url_edit").addEventListener("click", function(e) {
+        e.preventDefault();
+        const input = document.getElementById("aws_app_url");
+        input.removeAttribute("readonly");
+        input.focus();
+        input.select();
+    });
+    document.getElementById("aws_flow_mode").addEventListener("change", save_setting);
 
     // Load saved settings
     chrome.storage.local.get(["settings"], async function(result) {
         if (result.settings === undefined) {
             return;
         }
+        document.getElementById("aws_flow_mode").value = result.settings.aws_flow_mode || "access_portal";
         if (result.settings.okta_domain !== undefined) {
             document.getElementById("okta_domain").value = result.settings.okta_domain;
         }
@@ -314,9 +326,14 @@ function toggle_menu(e) {
         if (isShowing) {
             drop_div.classList.remove('show');
         } else {
-            drop_div.style.position = 'absolute';
-            drop_div.style.top = '100%';
-            drop_div.style.left = '0';
+            // Use position: fixed so the dropdown escapes the scrollable
+            // accounts container and can extend below its visible area.
+            const buttonRect = target.getBoundingClientRect();
+            drop_div.style.position = 'fixed';
+            drop_div.style.top = (buttonRect.bottom + 4) + 'px';
+            drop_div.style.left = buttonRect.left + 'px';
+            drop_div.style.right = 'auto';
+            drop_div.style.bottom = 'auto';
             drop_div.classList.add('show');
         }
     }
@@ -486,10 +503,12 @@ function update_accounts_status() {
         if (storage.accounts_status === undefined) {return}
 
         const button = document.getElementById('get_accounts');
+        const loadDiv = document.getElementById("accounts_load");
         document.getElementById("accounts_load_span").innerText = storage.accounts_status.message;
 
         if (storage.accounts_status.status === "success") {
-            document.getElementById("accounts_load").style.display = "none";
+            loadDiv.style.display = "none";
+            loadDiv.classList.remove("error");
             if (button) {
                 button.classList.remove('loading-state');
                 button.disabled = false;
@@ -497,7 +516,8 @@ function update_accounts_status() {
             }
         }
         else if (storage.accounts_status.status === "failed") {
-            document.getElementById("accounts_load").style.display = "none";
+            loadDiv.style.display = "flex";
+            loadDiv.classList.add("error");
             if (button) {
                 button.classList.remove('loading-state');
                 button.disabled = false;
@@ -505,13 +525,15 @@ function update_accounts_status() {
             }
         }
         else if (storage.accounts_status.status === "progress") {
-            document.getElementById("accounts_load").style.display = "flex";
+            loadDiv.style.display = "flex";
+            loadDiv.classList.remove("error");
             if (button) {
                 button.classList.add('loading-state');
             }
         }
         else {
-            document.getElementById("accounts_load").style.display = "none";
+            loadDiv.style.display = "none";
+            loadDiv.classList.remove("error");
             if (button) {
                 button.classList.remove('loading-state');
                 button.disabled = false;

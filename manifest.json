@@ -18,6 +18,7 @@
     
     "host_permissions": [
         "*://*.amazon.com/*",
+        "*://*.awsapps.com/*",
         "*://*.okta.com/*",
         "*://*.okta-emea.com/*",
         "*://*.oktapreview.com/*",
