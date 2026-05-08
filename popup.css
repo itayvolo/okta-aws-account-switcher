@@ -539,6 +539,29 @@ div.login_status span.green {
     display: none;
 }
 
+#accounts_load_dismiss {
+    display: none;
+    margin-top: 4px;
+    padding: 8px 18px;
+    border: 1px solid #dc2626;
+    background: var(--background);
+    color: #dc2626;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+#accounts_load_dismiss:hover {
+    background: #dc2626;
+    color: var(--background);
+}
+
+#accounts_load.error #accounts_load_dismiss {
+    display: inline-block;
+}
+
 /* Modern Loader */
 .modern-loader {
     position: relative;

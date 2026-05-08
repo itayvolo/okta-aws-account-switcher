@@ -126,6 +126,13 @@ async function load_popup() {
         input.select();
     });
     document.getElementById("aws_flow_mode").addEventListener("change", save_setting);
+    document.getElementById("accounts_load_dismiss").addEventListener("click", function() {
+        chrome.storage.local.remove("accounts_status", function() {
+            const loadDiv = document.getElementById("accounts_load");
+            loadDiv.classList.remove("error");
+            loadDiv.style.display = "none";
+        });
+    });
 
     // Load saved settings
     chrome.storage.local.get(["settings"], async function(result) {

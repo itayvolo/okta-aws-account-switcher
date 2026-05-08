@@ -743,26 +743,37 @@ function login(account, callback) {
                         // Expand the account if collapsed so the role link exists in the DOM.
                         const toggle = targetRow.querySelector('button[aria-expanded]');
                         if (toggle && toggle.getAttribute('aria-expanded') === 'false') {
+                            toggle.scrollIntoView({ block: 'center' });
                             toggle.click();
-                            for (let i = 0; i < 20; i++) {
-                                await sleep(100);
-                                if (toggle.getAttribute('aria-expanded') === 'true') break;
-                            }
-                            await sleep(200);
                         }
 
-                        // Find the federation link matching account_id + role_name.
-                        const links = document.querySelectorAll('a[data-testid="federation-link"]');
-                        for (const link of links) {
-                            const href = link.getAttribute('href') || '';
-                            if (href.includes('account_id=' + account_id) && href.includes('role_name=' + account_role)) {
-                                link.removeAttribute('target');
-                                link.removeAttribute('rel');
-                                link.click();
-                                return { ok: true };
+                        // Poll for the federation link to appear (the SPA may lazy-fetch
+                        // role rows after expansion).
+                        const findLink = () => {
+                            const links = document.querySelectorAll('a[data-testid="federation-link"]');
+                            for (const link of links) {
+                                const href = link.getAttribute('href') || '';
+                                if (href.includes('account_id=' + account_id) && href.includes('role_name=' + account_role)) {
+                                    return link;
+                                }
                             }
+                            return null;
+                        };
+
+                        let targetLink = findLink();
+                        for (let i = 0; i < 50 && !targetLink; i++) {
+                            await sleep(100);
+                            targetLink = findLink();
                         }
-                        return { ok: false, error: 'role link not found for ' + account_id + '/' + account_role };
+
+                        if (!targetLink) {
+                            return { ok: false, error: 'role link not found for ' + account_id + '/' + account_role };
+                        }
+
+                        targetLink.removeAttribute('target');
+                        targetLink.removeAttribute('rel');
+                        targetLink.click();
+                        return { ok: true };
                     },
                     args: [account_id, account_role]
                 }).then((results) => {
