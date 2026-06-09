@@ -1,10 +1,9 @@
 // AWS Account Switcher - Service Worker
 
-// Import crypto utilities for password decryption
-importScripts('crypto-utils.js');
+importScripts('endpoints.js');
 
 // Debug mode - set to true to enable console logging
-const DEBUG_MODE = true;
+const DEBUG_MODE = false;
 
 // Debug logging helper - only logs when DEBUG_MODE is true
 function debugLog(...args) {
@@ -12,6 +11,7 @@ function debugLog(...args) {
         console.log(...args);
     }
 }
+
 
 // Helper to check for Chrome API errors
 function checkLastError(context) {
@@ -36,12 +36,6 @@ const ALARM_PERIOD_MINUTES = 3.0;
 let keepAliveInterval;
 
 // Helper function to get decrypted password from storage
-async function getDecryptedPassword(storedPassword, domain) {
-    if (typeof CryptoUtils !== 'undefined' && CryptoUtils.isEncrypted(storedPassword)) {
-        return await CryptoUtils.decryptPassword(storedPassword, domain);
-    }
-    return storedPassword;
-}
 
 // Helper function to remove AWS cookies
 function removeAwsCookies(cookies, skipNoflush = true) {
@@ -71,6 +65,42 @@ function stopKeepAlive() {
         clearInterval(keepAliveInterval);
         keepAliveInterval = null;
     }
+}
+
+function persistAppFields(appId, fields, cb) {
+    chrome.storage.local.get(["settings"], (s) => {
+        const settings = s.settings || {};
+        const apps = Array.isArray(settings.aws_apps) ? settings.aws_apps : [];
+        const app = apps.find(a => a.id === appId);
+        if (!app) { if (cb) cb(null, presetForApp(null)); return; }
+        let changed = false;
+        Object.keys(fields).forEach(k => {
+            if (fields[k] !== undefined && app[k] !== fields[k]) { app[k] = fields[k]; changed = true; }
+        });
+        if (!changed) { if (cb) cb(app, presetForApp(app)); return; }
+        chrome.storage.local.set({ settings: settings }, () => {
+            safeSendMessage({"method": "UpdatePopup"});
+            if (cb) cb(app, presetForApp(app));
+        });
+    });
+}
+
+function getActiveApp(cb, statusKey = "accounts_status", preferredId = null) {
+    chrome.storage.local.get(["settings"], (s) => {
+        const settings = s.settings || {};
+        const apps = Array.isArray(settings.aws_apps) ? settings.aws_apps : [];
+        const app = (preferredId && apps.find(a => a.id === preferredId)) ||
+                    apps.find(a => a.id === settings.active_aws_app_id) ||
+                    apps[0];
+        if (!app) {
+            const update = {};
+            update[statusKey] = {"status": "failed", "message": "No AWS app configured. Add one in Settings."};
+            chrome.storage.local.set(update);
+            safeSendMessage({"method": statusKey === "login_status" ? "UpdateLoginStatus" : "UpdateAccountsStatus"});
+            return;
+        }
+        cb(app, presetForApp(app));
+    });
 }
 
 // Auto-detect AWS app from Okta apps list
@@ -140,7 +170,7 @@ function autoDetectAwsApp(okta_data) {
     // Look for AWS-related apps
     // Match by label containing "AWS" or "Amazon" (case insensitive)
     // Or by linkUrl containing "amazon" or "aws"
-    const awsApp = allApps.find(app => {
+    const awsApps = allApps.filter(app => {
         const label = (app.label || app.name || "").toLowerCase();
         const url = (app.linkUrl || app.href || "").toLowerCase();
 
@@ -156,22 +186,25 @@ function autoDetectAwsApp(okta_data) {
         return isAwsApp;
     });
 
-    if (awsApp) {
-        debugLog("AWS app detected:", awsApp.label || awsApp.name);
+    if (awsApps.length > 0) {
+        debugLog("AWS apps detected:", awsApps.length);
 
-        // Save to settings
         chrome.storage.local.get(["settings"], function(result) {
             if (result.settings === undefined) {
                 result.settings = {};
             }
 
-            result.settings.aws_app = {
-                label: awsApp.label || awsApp.name,
-                url: awsApp.linkUrl || awsApp.href
-            };
+            awsApps.forEach(app => {
+                const url = app.linkUrl || app.href;
+                if (!url) return;
+                upsertAwsAppInSettings(result.settings, {
+                    label: app.label || app.name,
+                    url: url
+                });
+            });
 
             chrome.storage.local.set(result, function() {
-                debugLog("AWS app saved to settings:", result.settings.aws_app);
+                debugLog("AWS apps merged into settings:", result.settings.aws_apps);
 
                 chrome.storage.local.set({
                     "login_status": {
@@ -180,6 +213,7 @@ function autoDetectAwsApp(okta_data) {
                     }
                 });
                 safeSendMessage({"method": "UpdateLoginStatus"});
+                safeSendMessage({"method": "UpdatePopup"});
 
                 // Auto-trigger account loading after AWS app is saved
                 setTimeout(() => get_all_accounts(), 500);
@@ -196,7 +230,7 @@ function autoDetectAwsApp(okta_data) {
 function handlePostLoginAccountLoad() {
     chrome.action.setBadgeText({text: ""});
     chrome.storage.local.get(["settings"], function(result) {
-        if (result.settings && result.settings.aws_app && result.settings.aws_app.url) {
+        if (result.settings && Array.isArray(result.settings.aws_apps) && result.settings.aws_apps.length > 0) {
             chrome.storage.local.set({
                 "login_status": {
                     "status": "success",
@@ -281,13 +315,12 @@ function detectAwsAppFromDashboard() {
                         const awsApp = results[0].result;
                         debugLog("Detected AWS app from dashboard:", awsApp);
 
-                        // Save the detected AWS app
                         chrome.storage.local.get(["settings"], function(result) {
                             if (!result.settings) result.settings = {};
-                            result.settings.aws_app = {
+                            upsertAwsAppInSettings(result.settings, {
                                 label: awsApp.label,
                                 url: awsApp.url
-                            };
+                            });
                             chrome.storage.local.set(result, function() {
                                 chrome.storage.local.set({
                                     "login_status": {
@@ -329,16 +362,20 @@ function detectAwsAppFromDashboard() {
 // Start keepalive when service worker starts
 startKeepAlive();
 
+migrateSettings();
+
 // Listen for extension startup
 chrome.runtime.onStartup.addListener(() => {
     debugLog('Extension startup - starting keepalive');
     startKeepAlive();
+    migrateSettings();
 });
 
 // Listen for extension install
 chrome.runtime.onInstalled.addListener(() => {
     debugLog('Extension installed - starting keepalive');
     startKeepAlive();
+    migrateSettings();
 });
 
 function safeSendMessage(message) {
@@ -365,12 +402,13 @@ function safeSendMessage(message) {
     });
 }
 
-function get_all_accounts() {
+function get_all_accounts(preferredId) {
     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
     safeSendMessage({"method": "UpdateAccountsStatus"});
-    aws_login(function(tab_id, portalHost){
+    getActiveApp(function(app, preset) {
+    aws_login(app, preset, function(tab_id, portalHost, app, preset){
         chrome.storage.local.get(["settings"], settings_storage => {
-            const flow_mode = (settings_storage.settings && settings_storage.settings.aws_flow_mode) || "access_portal";
+            const flow_mode = app.flow_mode || "access_portal";
             const is_portal = flow_mode === "access_portal";
             const inject = is_portal
                 ? { target: {tabId: tab_id}, files: ['get_accounts_portal.js'] }
@@ -416,17 +454,21 @@ function get_all_accounts() {
                     if (accounts_storage.accounts === undefined) {
                         accounts_storage.accounts = {};
                     }
+                    if (accounts_storage.accounts[app.id] === undefined) {
+                        accounts_storage.accounts[app.id] = {};
+                    }
+                    const appAccounts = accounts_storage.accounts[app.id];
                     if (settings_storage.settings === undefined) {settings_storage.settings = {}}
                     if (settings_storage.settings.role_filters === undefined) {settings_storage.settings.role_filters = []}
                     const role_filters = settings_storage.settings.role_filters;
                     parsed.forEach(a => {
                         if (role_filters.length > 0 && role_filters.indexOf(a.role) === -1) {
-                            if (accounts_storage.accounts[a.account_name] !== undefined) {
-                                delete accounts_storage.accounts[a.account_name];
+                            if (appAccounts[a.account_name] !== undefined) {
+                                delete appAccounts[a.account_name];
                             }
                         } else {
-                            if (accounts_storage.accounts[a.account_name] === undefined) {
-                                accounts_storage.accounts[a.account_name] = {"id": a.account_id, "status": "expired"};
+                            if (appAccounts[a.account_name] === undefined) {
+                                appAccounts[a.account_name] = {"id": a.account_id, "status": "expired"};
                             }
                         }
                     });
@@ -434,7 +476,9 @@ function get_all_accounts() {
                     chrome.tabs.remove(tab_id);
                     chrome.storage.local.set({accountsstatus: "ready"})
                     chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Successfully retrieved the list of AWS accounts."}})
-                    safeSendMessage({"method": "UpdatePopup"});
+                    chrome.storage.local.remove("login_status", function() {
+                        safeSendMessage({"method": "UpdatePopup"});
+                    });
                 });
             }).catch((error) => {
                 chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
@@ -442,15 +486,17 @@ function get_all_accounts() {
             });
         });
     })
+    }, "accounts_status", preferredId);
 }
 
-function change_account(account){
+function change_account(app, preset, account){
     debugLog('change_account called for:', account);
     debugLog('Switching to account:', account);
-    chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
+    chrome.cookies.getAll({"domain": preset.cookieDomain}, function(cookies_to_remove) {
         removeAwsCookies(cookies_to_remove);
         chrome.storage.local.get(["accounts"], function(result) {
-            const cookies_to_add = result["accounts"][account].cookies;
+            const appAccounts = (result["accounts"] && result["accounts"][app.id]) || {};
+            const cookies_to_add = appAccounts[account].cookies;
             for (let i = 0; i < cookies_to_add.length; i++) {
                 var cookie_to_add = cookies_to_add[i];
                 delete cookie_to_add.hostOnly;
@@ -459,27 +505,28 @@ function change_account(account){
                 if (!domainMatch) {continue;}
                 var domain = domainMatch[1];
                 cookie_to_add.url = "https://" + domain + cookie_to_add.path;
-                chrome.cookies.set(cookie_to_add);            
+                chrome.cookies.set(cookie_to_add);
             }
-            refresh_all_aws_tabs();
+            refresh_all_aws_tabs(preset);
         });
     });
 }
 
-function refresh_all_aws_tabs() {
-    chrome.tabs.query({"url": "*://*.console.aws.amazon.com/*"}, tabs => {
+function refresh_all_aws_tabs(preset) {
+    preset = preset || REGION_PRESETS.commercial;
+    chrome.tabs.query({"url": "*://*." + preset.consoleHost + "/*"}, tabs => {
         if (tabs.length > 0) {
             for (let i = 0; i < tabs.length; i++) {
                 chrome.tabs.reload(tabs[i].id);
             }
         } else {
-            chrome.tabs.create({"url": "https://console.aws.amazon.com/"});
+            chrome.tabs.create({"url": preset.consoleCreateUrl});
         }
         chrome.storage.local.set({"accounts_status": {"status": "success", "message": "🎉 Account changed successfully!"}})
         safeSendMessage({"method": "UpdateAccountsStatus"});
         chrome.tabs.query({ active: true, currentWindow: true }, active_tabs => {
             if (active_tabs[0] != undefined) {
-                if (!active_tabs[0].url.includes("console.aws.amazon.com")) {
+                if (!active_tabs[0].url.includes(preset.consoleHost)) {
                     chrome.tabs.update(tabs[0].id, {selected: true});
                 }
             }
@@ -487,11 +534,13 @@ function refresh_all_aws_tabs() {
     });
 }
 
-function save(login, callback, originalAccountKey){
+function save(login, callback, originalAccountKey, appId, preset){
+    preset = preset || REGION_PRESETS.commercial;
+    const apex = cookieApex(preset.cookieDomain);
     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Saving account cookies."}});
     safeSendMessage({"method": "UpdateAccountsStatus"});
     var account_name, account_id, account_role;
-    chrome.cookies.getAll({"domain": ".amazon.com"}, function(all_cookies){
+    chrome.cookies.getAll({"domain": preset.cookieDomain}, function(all_cookies){
 
         if (all_cookies.length === 0) {callback();return}
         for (let i = 0; i < all_cookies.length; i++) {
@@ -505,7 +554,7 @@ function save(login, callback, originalAccountKey){
             }
             // Check for aws-userInfo (legacy)
             if (all_cookies[i].name === "aws-userInfo") {
-                if (all_cookies[i].domain === "amazon.com") {continue;}
+                if (all_cookies[i].domain === apex) {continue;}
                 try {
                     var userInfo = JSON.parse(decodeURIComponent(all_cookies[i].value));
                     account_name = userInfo.alias;
@@ -515,20 +564,20 @@ function save(login, callback, originalAccountKey){
                     // Continue to next cookie on error
                 }
             }
-            
+
             // Check for aws-consoleInfo (newer AWS console - JWT format)
             if (all_cookies[i].name === "aws-consoleInfo") {
-                if (all_cookies[i].domain === "amazon.com") {continue;}
+                if (all_cookies[i].domain === apex) {continue;}
                 try {
                     // JWT has 3 parts separated by dots: header.payload.signature
                     const jwtParts = all_cookies[i].value.split('.');
                     if (jwtParts.length >= 2) {
                         // Decode the payload (second part)
                         const payload = JSON.parse(atob(jwtParts[1]));
-                        
+
                         if (payload.sub) {
                             // Extract from ARN format like: "arn:aws:iam::015428540659:user/route53"
-                            const arnMatch = payload.sub.match(/arn:aws:iam::([0-9]+):(?:user|assumed-role)\/(.+?)(?:\/|$)/);
+                            const arnMatch = payload.sub.match(/arn:aws(?:-us-gov|-cn)?:iam::([0-9]+):(?:user|assumed-role)\/(.+?)(?:\/|$)/);
                             if (arnMatch) {
                                 account_id = arnMatch[1];
                                 const userOrRole = arnMatch[2];
@@ -570,21 +619,25 @@ function save(login, callback, originalAccountKey){
                 if (storage.accounts === undefined) {
                     storage.accounts = {};
                 }
+                if (storage.accounts[appId] === undefined) {
+                    storage.accounts[appId] = {};
+                }
+                const appAccounts = storage.accounts[appId];
 
-                if (storage.accounts[originalAccountKey] === undefined) {
+                if (appAccounts[originalAccountKey] === undefined) {
                     console.error('save() originalAccountKey not found in storage:', originalAccountKey);
-                    console.error('Available accounts:', Object.keys(storage.accounts));
+                    console.error('Available accounts:', Object.keys(appAccounts));
                     callback();
                     return;
                 }
 
                 // Update the existing account with new cookies and ready status
                 const newExpirationDate = (Date.now()/1000) + (SESSION_EXPIRATION_HOURS * 60 * 60);
-                storage.accounts[originalAccountKey].cookies = all_cookies;
-                storage.accounts[originalAccountKey].expirationDate = newExpirationDate;
-                storage.accounts[originalAccountKey].status = "ready";
+                appAccounts[originalAccountKey].cookies = all_cookies;
+                appAccounts[originalAccountKey].expirationDate = newExpirationDate;
+                appAccounts[originalAccountKey].status = "ready";
                 if (extractedId) {
-                    storage.accounts[originalAccountKey].id = extractedId;
+                    appAccounts[originalAccountKey].id = extractedId;
                 }
 
                 console.log('[AWS Switcher] save() updating existing account:', originalAccountKey, 'to status: ready');
@@ -615,10 +668,14 @@ function save(login, callback, originalAccountKey){
             if (storage.accounts === undefined) {
                 storage.accounts = {};
             }
+            if (storage.accounts[appId] === undefined) {
+                storage.accounts[appId] = {};
+            }
+            const appAccounts = storage.accounts[appId];
             // Try to get existing expiration date using the original account key if provided
             const lookupKey = originalAccountKey || (account_name + '/' + account_role);
-            if (storage.accounts[lookupKey] !== undefined) {
-                expirationDate = storage.accounts[lookupKey].expirationDate;
+            if (appAccounts[lookupKey] !== undefined) {
+                expirationDate = appAccounts[lookupKey].expirationDate;
             }
             if (login) {
                 expirationDate = (Date.now()/1000) + (SESSION_EXPIRATION_HOURS * 60 * 60);
@@ -634,7 +691,7 @@ function save(login, callback, originalAccountKey){
                 originalAccountKey: originalAccountKey
             });
 
-            storage.accounts[accountKey] = accountData;
+            appAccounts[accountKey] = accountData;
             chrome.storage.local.set(storage, function(){
                 debugLog('save() completed, account status set to ready for:', accountKey);
                 chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Account ready!"}});
@@ -646,27 +703,28 @@ function save(login, callback, originalAccountKey){
     });
 }
 
-function login(account, callback) {
+function login(app, preset, account, callback) {
     debugLog('login called for account:', account);
     chrome.storage.local.get(["accounts"], function(storage){
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
         safeSendMessage({"method": "UpdateAccountsStatus"});
-        if (storage.accounts === undefined) {
+        const appAccounts = (storage.accounts && storage.accounts[app.id]) || undefined;
+        if (appAccounts === undefined) {
             chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No accounts found in storage."}})
             safeSendMessage({"method": "UpdateAccountsStatus"});
             return;
         }
-        if (storage.accounts[account] === undefined) {
+        if (appAccounts[account] === undefined) {
             chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No such account " + account}})
             safeSendMessage({"method": "UpdateAccountsStatus"});
             return;
         }
-        var account_id = storage.accounts[account].id;
+        var account_id = appAccounts[account].id;
         var account_name = account.split('/')[0];
         var account_role = account.split('/')[1];
         debugLog(`Extracted account info: id="${account_id}", name="${account_name}", role="${account_role}"`);
-        
-        aws_login(function(tab_id, portalHost){
+
+        aws_login(app, preset, function(tab_id, portalHost, app, preset){
             debugLog('aws_login callback called with tab_id:', tab_id, 'portalHost:', portalHost);
             chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Selecting account..."}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
@@ -688,14 +746,20 @@ function login(account, callback) {
                         }
                         const tab_url = tab.url;
                         console.log('[AWS Switcher] Checking tab URL:', tab_url);
-                        if (tab_url && tab_url.includes("console.aws.amazon.com")) {
+                        const isGovConsole = tab_url && tab_url.includes(REGION_PRESETS.govcloud.consoleHost);
+                        const isCommercialConsole = tab_url && tab_url.includes(REGION_PRESETS.commercial.consoleHost);
+                        if (isGovConsole || isCommercialConsole) {
                             clearInterval(console_timer);
                             console.log('[AWS Switcher] AWS console loaded:', tab_url);
-                            setTimeout(() => {
-                                save(true, function(){
-                                    callback();
-                                }, account);
-                            }, 2000);
+                            const detectedRegion = isGovConsole ? "govcloud" : "commercial";
+                            persistAppFields(app.id, { region: detectedRegion }, function(updatedApp, updatedPreset) {
+                                const finalPreset = updatedPreset || preset;
+                                setTimeout(() => {
+                                    save(true, function(){
+                                        callback();
+                                    }, account, app.id, finalPreset);
+                                }, 2000);
+                            });
                         } else if (console_check_count > 30) {
                             console.log('[AWS Switcher] Timeout waiting for console after 30 checks');
                             clearInterval(console_timer);
@@ -1012,21 +1076,22 @@ function login(account, callback) {
 function checkExpire(){
     chrome.storage.local.get(["accounts"], (result) => {
         if (result.accounts === undefined) {return}
-        var items = result.accounts;
-        if (items.length === 0) {return}
-        var allKeys = Object.keys(items);
         var currentDate = Math.floor(Date.now() / 1000);
-        for (let i = 0; i < allKeys.length; i++) {
-            var account = allKeys[i];
-            var expirationDate = items[account].expirationDate;
-            var status = items[account].status;
-            if (status === "expired") {
-                continue;
-            }
-            if (expirationDate < currentDate) {
-                result["accounts"][account].status = "expired";
-                chrome.storage.local.set(result);
-            }
+        var changed = false;
+        Object.keys(result.accounts).forEach(appId => {
+            var appAccounts = result.accounts[appId];
+            if (!appAccounts || typeof appAccounts !== "object") {return}
+            Object.keys(appAccounts).forEach(account => {
+                var entry = appAccounts[account];
+                if (!entry || entry.status === "expired") {return}
+                if (entry.expirationDate < currentDate) {
+                    entry.status = "expired";
+                    changed = true;
+                }
+            });
+        });
+        if (changed) {
+            chrome.storage.local.set(result);
         }
     });
 }
@@ -1035,63 +1100,66 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
     debugLog('Background received message:', request);
     
     if (request.method === "changeAccount") {
-        debugLog('Processing changeAccount for:', request.account);
+        debugLog('Processing changeAccount for:', request.account, 'app:', request.appId);
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
         safeSendMessage({"method": "UpdateAccountsStatus"});
-        chrome.storage.local.get(["accounts"], function(result){
-            debugLog('Loaded accounts from storage:', result.accounts);
+        getActiveApp(function(app, preset) {
+            chrome.storage.local.get(["accounts"], function(result){
+                const appAccounts = (result.accounts && result.accounts[app.id]) || undefined;
+                if (appAccounts === undefined) {
+                    console.error('No accounts found in storage for app', app.id);
+                    chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No accounts found in storage."}})
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    return;
+                }
+                if (appAccounts[request.account] === undefined) {
+                    console.error('Account not found:', request.account, 'Available accounts:', Object.keys(appAccounts));
+                    chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No such account " + request.account}})
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    return;
+                }
 
-            if (result.accounts === undefined) {
-                console.error('No accounts found in storage');
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No accounts found in storage."}})
-                safeSendMessage({"method": "UpdateAccountsStatus"});
-                return;
-            }
-            if (result.accounts[request.account] === undefined) {
-                console.error('Account not found:', request.account, 'Available accounts:', Object.keys(result.accounts));
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "No such account " + request.account}})
-                safeSendMessage({"method": "UpdateAccountsStatus"});
-                return;
-            }
-            
-            const accountData = result.accounts[request.account];
-            debugLog('Account data for', request.account, ':', accountData);
-            
-            if (accountData.status === "expired") {
-                debugLog('Account is expired, attempting login...');
-                login(request.account, refresh_all_aws_tabs);
-            } else {
-                debugLog('Account is ready, changing account...');
-                change_account(request.account);
-            }
-        });
+                const accountData = appAccounts[request.account];
+                debugLog('Account data for', request.account, ':', accountData);
+
+                if (accountData.status === "expired") {
+                    debugLog('Account is expired, attempting login...');
+                    login(app, preset, request.account, () => getActiveApp((a, p) => refresh_all_aws_tabs(p)));
+                } else {
+                    debugLog('Account is ready, changing account...');
+                    change_account(app, preset, request.account);
+                }
+            });
+        }, "accounts_status", request.appId);
     }
     else if (request.method === "loginOkta") {
         okta_login();
     }
     else if (request.method === "getAllAccounts") {
-        get_all_accounts();
+        get_all_accounts(request.appId);
     }
     else if (request.method === "loadOktaApps") {
         loadOktaApps();
     }
     else if (request.method === "expireAccount") {
         // Clear AWS cookies to log out and expire the account
-        debugLog('Expiring account:', request.account);
-        chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
-            removeAwsCookies(cookies_to_remove);
-            
-            // Update account status to expired
-            chrome.storage.local.get(["accounts"], function(result) {
-                if (result.accounts && result.accounts[request.account]) {
-                    result.accounts[request.account].status = "expired";
-                    chrome.storage.local.set(result, function() {
-                        debugLog('Account expired and cookies cleared:', request.account);
-                        safeSendMessage({"method": "UpdatePopup"});
-                    });
-                }
+        debugLog('Expiring account:', request.account, 'app:', request.appId);
+        getActiveApp(function(app, preset) {
+            chrome.cookies.getAll({"domain": preset.cookieDomain}, function(cookies_to_remove) {
+                removeAwsCookies(cookies_to_remove);
+
+                // Update account status to expired
+                chrome.storage.local.get(["accounts"], function(result) {
+                    if (result.accounts && result.accounts[app.id] && result.accounts[app.id][request.account]) {
+                        result.accounts[app.id][request.account].status = "expired";
+                        chrome.storage.local.set(result, function() {
+                            debugLog('Account expired and cookies cleared:', request.account);
+                            safeSendMessage({"method": "UpdatePopup"});
+                        });
+                    }
+                });
             });
-        });
+        }, "accounts_status", request.appId);
     }
 });
 
@@ -1122,13 +1190,24 @@ chrome.idle.onStateChanged.addListener(function(state) {
     }
 });
 
-function aws_login(callback) {
-    debugLog('aws_login function called');
-    
-    // Clear existing AWS cookies to prevent old session interference
+function clearAwsCookiesAllRegions(done) {
+    const domains = [REGION_PRESETS.commercial.cookieDomain, REGION_PRESETS.govcloud.cookieDomain];
+    let pending = domains.length;
+    domains.forEach(domain => {
+        chrome.cookies.getAll({"domain": domain}, function(cookies_to_remove) {
+            removeAwsCookies(cookies_to_remove);
+            if (--pending === 0) done();
+        });
+    });
+}
+
+function aws_login(app, preset, callback) {
+    debugLog('aws_login function called for app:', app && app.id, app && app.region);
+    preset = preset || presetForApp(app);
+
+    // Clear cookies for both regions so a region change can't leave a stale session.
     debugLog('Clearing existing AWS cookies...');
-    chrome.cookies.getAll({"domain": ".amazon.com"}, function(cookies_to_remove) {
-        removeAwsCookies(cookies_to_remove);
+    clearAwsCookiesAllRegions(function() {
         debugLog('AWS cookies cleared, proceeding with login...');
 
         // Now proceed with login after cookies are cleared
@@ -1144,19 +1223,13 @@ function aws_login(callback) {
                 safeSendMessage({"method": "UpdateAccountsStatus"});
                 return;
             }
-            if (storage.settings.aws_app === undefined) {
-                // Try to auto-detect by running the Okta login flow if credentials are stored.
-                if (storage.settings.okta_username && storage.settings.okta_password) {
-                    chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Detecting AWS app via Okta login..."}});
-                    safeSendMessage({"method": "UpdateAccountsStatus"});
-                    okta_login(() => {}, null);
-                    return;
-                }
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "AWS app not set. Click Login first to auto-detect, or use 'edit' next to AWS App URL to paste it manually."}})
+            if (!app.url) {
+                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Detecting AWS app via Okta login..."}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
+                okta_login(() => {}, null);
                 return;
             }
-            var aws_saml_url = storage.settings.aws_app.url;
+            var aws_saml_url = app.url;
             //Check okta login
             const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs";
             fetch(list_apps_url, {
@@ -1166,12 +1239,11 @@ function aws_login(callback) {
                 if (!response.ok) {
                     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing okta login"}});
                     safeSendMessage({"method": "UpdateAccountsStatus"});
-                    okta_login(aws_login, callback);
+                    okta_login(() => aws_login(app, preset, callback), null);
                     return;
                 }
                 chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Opening AWS login page"}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
-                var flow_mode = storage.settings.aws_flow_mode || "access_portal";
                 chrome.tabs.create({"url": aws_saml_url, "selected": false}, function(tab) {
                     if (checkLastError('tabs.create aws_saml_url') || !tab) {
                         chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Failed to create AWS login tab"}});
@@ -1179,39 +1251,56 @@ function aws_login(callback) {
                         return;
                     }
                     var signin_timer = setInterval(wait_signin, 1000);
+                    // Detect the flow mode and region from wherever the app URL lands,
+                    // persist it back onto the app, then continue with the resolved app/preset.
+                    function proceed(result) {
+                        clearInterval(signin_timer);
+                        const detected = {};
+                        if (result.flow) detected.flow_mode = result.flow;
+                        if (result.region) detected.region = result.region;
+                        persistAppFields(app.id, detected, function(updatedApp, updatedPreset) {
+                            const finalApp = updatedApp || app;
+                            const finalPreset = updatedPreset || preset;
+                            setTimeout(() => callback(tab.id, result.portalHost, finalApp, finalPreset), 500);
+                        });
+                    }
                     function wait_signin(){
                         chrome.scripting.executeScript({
                             target: {tabId: tab.id},
-                            func: (mode) => {
-                                if (mode === "access_portal") {
-                                    const m = window.location.href.match(/^https:\/\/([^\/]+\.awsapps\.com)\/start/);
-                                    if (!m) {
-                                        return { ready: false, url: window.location.href };
-                                    }
-                                    return { ready: true, url: window.location.href, portalHost: m[1] };
+                            func: () => {
+                                const href = window.location.href;
+                                const portal = href.match(/^https:\/\/([^/]+\.awsapps(?:-us-gov)?\.com)\/start/);
+                                if (portal) {
+                                    const host = portal[1];
+                                    return {
+                                        ready: true,
+                                        flow: "access_portal",
+                                        region: host.includes("awsapps-us-gov") ? "govcloud" : undefined,
+                                        portalHost: host,
+                                        url: href
+                                    };
                                 }
-                                // Classic SAML
-                                if (window.location.href !== "https://signin.aws.amazon.com/saml") {
-                                    return { ready: false, url: window.location.href };
+                                const samlMatch = href.match(/^https:\/\/signin\.(aws\.amazon\.com|amazonaws-us-gov\.com)\/saml/);
+                                if (samlMatch) {
+                                    const accountContainers = document.querySelectorAll('.saml-account');
+                                    const signinButton = document.getElementById('signin_button');
+                                    return {
+                                        ready: accountContainers.length > 0 && signinButton !== null,
+                                        flow: "classic_saml",
+                                        region: samlMatch[1] === "amazonaws-us-gov.com" ? "govcloud" : "commercial",
+                                        accountCount: accountContainers.length,
+                                        url: href
+                                    };
                                 }
-                                const accountContainers = document.querySelectorAll('.saml-account');
-                                const signinButton = document.getElementById('signin_button');
-                                const ready = accountContainers.length > 0 && signinButton !== null;
-                                return {
-                                    ready: ready,
-                                    url: window.location.href,
-                                    accountCount: accountContainers.length,
-                                    hasSigninButton: signinButton !== null
-                                };
-                            },
-                            args: [flow_mode]
+                                return { ready: false, url: href };
+                            }
                         }).then((results) => {
                             const result = results[0].result;
                             if (!result || !result.ready) {
                                 debugLog("AWS login page not ready yet:", result);
                                 return;
                             }
-                            if (flow_mode === "access_portal") {
+                            if (result.flow === "access_portal") {
                                 // Wait for the SPA's accounts table to render.
                                 chrome.scripting.executeScript({
                                     target: {tabId: tab.id},
@@ -1227,16 +1316,14 @@ function aws_login(callback) {
                                         return;
                                     }
                                     debugLog("Portal table ready, host:", result.portalHost);
-                                    clearInterval(signin_timer);
-                                    setTimeout(() => callback(tab.id, result.portalHost), 500);
+                                    proceed(result);
                                 }).catch((error) => {
                                     debugLog("Portal probe error:", error.message);
                                 });
                                 return;
                             }
-                            debugLog("SAML page ready with", result.accountCount, "accounts");
-                            clearInterval(signin_timer);
-                            setTimeout(() => callback(tab.id), 500);
+                            debugLog("SAML page ready with", result.accountCount, "accounts, region:", result.region);
+                            proceed(result);
                         }).catch((error) => {
                             clearInterval(signin_timer);
                             chrome.storage.local.set({"accounts_status": {"status": "failed", "message": error.message}});
@@ -1253,1059 +1340,55 @@ function aws_login(callback) {
     });
 }
 
+// Opens the Okta sign-in page and lets the USER authenticate directly on Okta
+// (the extension never handles the password). Once the Okta session is
+// established, startManualLoginMonitoring detects it and loads the apps.
 function okta_login(callback, callback_argument = null) {
-    // Store current active tab to return to later and reset tab switching flag
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        const originalTab = tabs[0];
-        chrome.storage.local.set({
-            "originalTab": {id: originalTab.id, url: originalTab.url},
-            "hasReturnedToOriginalTab": false,  // Reset for new login session
-            "appsAlreadyLoading": false  // Reset app loading flag
-        });
-        
-        chrome.storage.local.get(["settings"], function(storage){
-            chrome.storage.local.set({"login_status": {"status": "progress", "message": "Starting seamless login..."}});
-            safeSendMessage({"method": "UpdateLoginStatus"});
+    chrome.storage.local.get(["settings"], function(storage){
+        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Opening Okta sign-in..."}});
+        safeSendMessage({"method": "UpdateLoginStatus"});
 
-            // Set badge to show login in progress
-            chrome.action.setBadgeText({text: "..."});
-            chrome.action.setBadgeBackgroundColor({color: "#2196F3"});
+        chrome.action.setBadgeText({text: "..."});
+        chrome.action.setBadgeBackgroundColor({color: "#2196F3"});
 
-            if (storage.settings === undefined) {
-            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! No settings found"}});
-            safeSendMessage({"method": "UpdateLoginStatus"});
-            return;
-        }
-        if (storage.settings.okta_domain === undefined) {
+        if (storage.settings === undefined || storage.settings.okta_domain === undefined) {
             chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! OKTA domain not set"}});
             safeSendMessage({"method": "UpdateLoginStatus"});
             return;
         }
-        if (storage.settings.okta_username === undefined) {
-            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! OKTA username not set"}});
-            safeSendMessage({"method": "UpdateLoginStatus"});
-            return;
-        }
-        if (storage.settings.okta_password === undefined) {
-            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! OKTA password not set"}});
-            safeSendMessage({"method": "UpdateLoginStatus"});
-            return;
-        }
-        var domain = storage.settings.okta_domain;
-        var username = storage.settings.okta_username;
-        var storedPassword = storage.settings.okta_password;
 
-        // Decrypt password if it's encrypted
-        (async () => {
-            let password = storedPassword;
-            if (typeof CryptoUtils !== 'undefined' && CryptoUtils.isEncrypted(storedPassword)) {
-                const decrypted = await CryptoUtils.decryptPassword(storedPassword, domain);
-                if (decrypted) {
-                    password = decrypted;
-                } else {
-                    chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! Could not decrypt password"}});
-                    safeSendMessage({"method": "UpdateLoginStatus"});
-                    return;
-                }
-            }
-        
-        // Go to root domain and wait for OAuth2 flow to present login fields
+        var domain = storage.settings.okta_domain;
         const okta_url = "https://" + domain + "/";
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Starting OAuth2 flow..."}});
+
+        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Sign in to Okta in the opened tab..."}});
         safeSendMessage({"method": "UpdateLoginStatus"});
 
-        // First try to find an existing Okta tab
+        // Open (or focus) the Okta tab in the FOREGROUND so the user can sign in.
         chrome.tabs.query({url: "*://" + domain + "/*"}, function(existingTabs) {
             checkLastError('tabs.query okta domain');
             if (existingTabs && existingTabs.length > 0) {
-                // Use existing tab but make it background
-                chrome.tabs.update(existingTabs[0].id, {url: okta_url, active: false}, function(tab) {
+                chrome.tabs.update(existingTabs[0].id, {url: okta_url, active: true}, function(tab) {
                     if (checkLastError('tabs.update okta') || !tab) {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to update Okta tab"}});
+                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to open Okta tab"}});
                         safeSendMessage({"method": "UpdateLoginStatus"});
                         return;
                     }
-                    waitForOAuth2LoginFields(tab.id, callback, callback_argument, username, password);
+                    startManualLoginMonitoring(tab.id, callback, callback_argument);
                 });
             } else {
-                chrome.tabs.create({
-                    "url": okta_url,
-                    "active": false  // Keep in background initially to preserve popup
-                }, function(tab) {
+                chrome.tabs.create({"url": okta_url, "active": true}, function(tab) {
                     if (checkLastError('tabs.create okta') || !tab) {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to create Okta tab"}});
+                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to open Okta tab"}});
                         safeSendMessage({"method": "UpdateLoginStatus"});
                         return;
                     }
-                    waitForOAuth2LoginFields(tab.id, callback, callback_argument, username, password);
+                    startManualLoginMonitoring(tab.id, callback, callback_argument);
                 });
             }
         });
-        })(); // Close the async IIFE
     });
-    }); // Close chrome.tabs.query callback
 }
 
-function handleLoginTab(tabId, callback, callback_argument, username, password, skipApiCheck = false) {
-    
-    // Wait for tab to load, then inject login script
-    const login_timer = setInterval(function() {
-                chrome.scripting.executeScript({
-                    target: {tabId: tabId},
-                    func: () => document.readyState
-                }).then((results) => {
-                    if (results[0].result === 'complete') {
-                        clearInterval(login_timer);
-                        
-                        // Update status to show we're checking authentication
-                        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Checking authentication..."}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        
-                        // Inject login credentials and submit
-                        chrome.scripting.executeScript({
-                            target: {tabId: tabId},
-                            func: (username, password) => {
-                                debugLog("SCRIPT INJECTION STARTED - VERY FIRST LINE");
-                                try {
-                                    debugLog("INSIDE TRY BLOCK");
-                                    // ALWAYS run comprehensive page analysis FIRST - before any other code
-                                    debugLog("=== COMPREHENSIVE PAGE ANALYSIS STARTING ===");
-                                    debugLog("Login injection script starting");
-                                    debugLog("Page URL:", window.location.href);
-                                    debugLog("Page title:", document.title);
-                                    debugLog("Document ready state:", document.readyState);
-                                    debugLog("Body text preview:", document.body ? document.body.textContent.substring(0, 200) : 'NO BODY');
-                                    
-                                    
-                                    // Don't assume login status from page content - always verify with actual login attempt
-                                    // The API call validation will happen separately
-                                    
-                                    // SKIP the "already logged in" check - force complete login flow
-                                    // This ensures we establish a proper Okta session that can access APIs
-                                    debugLog("Forcing complete login flow to ensure proper session establishment");
-                                    
-                                    // Don't check for existing login - always proceed with credential injection
-                                    // This will ensure we get a fresh, valid session
-                                
-                                // Check what's actually on this page to understand what we're dealing with
-                                debugLog("=== DETAILED PAGE ANALYSIS ===");
-                                debugLog("Page URL:", window.location.href);
-                                debugLog("Page title:", document.title);
-                                
-                                // Log all elements on the page to see what we're missing
-                                const allInputs = Array.from(document.querySelectorAll('input'));
-                                const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'));
-                                const allClickable = Array.from(document.querySelectorAll('*[onclick], button, input, a, [role="button"], [tabindex]'));
-                                
-                                debugLog("ALL INPUTS (" + allInputs.length + "):");
-                                allInputs.forEach((inp, i) => {
-                                    debugLog(`  ${i+1}. ${inp.tagName} - type:"${inp.type}" name:"${inp.name}" id:"${inp.id}" value:"${inp.value}" class:"${inp.className}"`);
-                                });
-                                
-                                debugLog("ALL BUTTONS (" + allButtons.length + "):");
-                                allButtons.forEach((btn, i) => {
-                                    debugLog(`  ${i+1}. ${btn.tagName} - type:"${btn.type}" id:"${btn.id}" class:"${btn.className}" text:"${(btn.textContent || btn.value || '').substring(0,50)}"`);
-                                });
-                                
-                                debugLog("ALL CLICKABLE (" + allClickable.length + "):");
-                                allClickable.forEach((el, i) => {
-                                    if (i < 10) { // Limit to first 10
-                                        debugLog(`  ${i+1}. ${el.tagName} - id:"${el.id}" class:"${el.className}" text:"${(el.textContent || '').substring(0,50)}" href:"${el.href || ''}" onclick:"${el.onclick || ''}"`);
-                                    }
-                                });
-                                
-                                // If this is an OAuth2 page, maybe we need to click something to get to the login page
-                                if (window.location.href.includes('/oauth2') || window.location.href.includes('/authorize')) {
-                                    debugLog("This is an OAuth2 page - looking for elements that might take us to login");
-                                    
-                                    // Try to find any element that looks like it might proceed to login
-                                    const potentialLoginTriggers = allClickable.filter(el => {
-                                        const text = (el.textContent || el.value || '').toLowerCase();
-                                        const className = (el.className || '').toLowerCase();
-                                        const id = (el.id || '').toLowerCase();
-                                        
-                                        return text.includes('sign') || 
-                                               text.includes('login') || 
-                                               text.includes('continue') ||
-                                               text.includes('proceed') ||
-                                               className.includes('sign') ||
-                                               className.includes('login') ||
-                                               className.includes('continue') ||
-                                               id.includes('sign') ||
-                                               id.includes('login') ||
-                                               id.includes('continue');
-                                    });
-                                    
-                                    debugLog("POTENTIAL LOGIN TRIGGERS (" + potentialLoginTriggers.length + "):");
-                                    potentialLoginTriggers.forEach((el, i) => {
-                                        debugLog(`  ${i+1}. ${el.tagName} - "${(el.textContent || '').substring(0,30)}" class:"${el.className}" id:"${el.id}"`);
-                                    });
-                                    
-                                    // If we found something that looks like a login trigger, click it
-                                    if (potentialLoginTriggers.length > 0) {
-                                        debugLog("Clicking potential login trigger:", potentialLoginTriggers[0].tagName, potentialLoginTriggers[0].textContent || potentialLoginTriggers[0].id);
-                                        potentialLoginTriggers[0].click();
-                                        
-                                        return {
-                                            success: false,
-                                            message: 'Clicked potential login trigger, waiting for redirect...',
-                                            pageTitle: document.title,
-                                            url: window.location.href,
-                                            clickedElement: potentialLoginTriggers[0].tagName + ' - ' + (potentialLoginTriggers[0].textContent || potentialLoginTriggers[0].id)
-                                        };
-                                    }
-                                    
-                                    // If no obvious triggers, try clicking any button or link
-                                    if (allButtons.length > 0) {
-                                        debugLog("No obvious login triggers, trying first button:", allButtons[0].textContent || allButtons[0].value);
-                                        allButtons[0].click();
-                                        return {
-                                            success: false,
-                                            message: 'Clicked first available button',
-                                            pageTitle: document.title,
-                                            url: window.location.href,
-                                            clickedElement: allButtons[0].tagName
-                                        };
-                                    }
-                                    
-                                    // Try clicking any link that stays on the same domain
-                                    const links = Array.from(document.querySelectorAll('a'));
-                                    if (links.length > 0) {
-                                        debugLog("ALL LINKS FOUND:");
-                                        links.forEach((link, i) => {
-                                            debugLog(`  ${i+1}. "${(link.textContent || '').substring(0,30)}" -> ${link.href}`);
-                                        });
-                                        
-                                        // Filter for links that stay on the same domain and might be login-related
-                                        const currentDomain = window.location.hostname;
-                                        const loginLinks = links.filter(link => {
-                                            const href = link.href || '';
-                                            const text = (link.textContent || '').toLowerCase();
-                                            
-                                            // Must stay on same domain
-                                            const linkDomain = new URL(href).hostname;
-                                            const sameDomain = linkDomain === currentDomain;
-                                            
-                                            // Look for login-related terms
-                                            const isLoginRelated = text.includes('sign') || text.includes('login') || 
-                                                                   href.includes('sign') || href.includes('login') ||
-                                                                   href.includes('/login') || href.includes('/signin');
-                                            
-                                            return sameDomain && isLoginRelated;
-                                        });
-                                        
-                                        debugLog("SAME-DOMAIN LOGIN LINKS (" + loginLinks.length + "):");
-                                        loginLinks.forEach((link, i) => {
-                                            debugLog(`  ${i+1}. "${(link.textContent || '').substring(0,30)}" -> ${link.href}`);
-                                        });
-                                        
-                                        if (loginLinks.length > 0) {
-                                            debugLog("Clicking same-domain login link:", loginLinks[0].textContent, loginLinks[0].href);
-                                            loginLinks[0].click();
-                                            return {
-                                                success: false,
-                                                message: 'Clicked same-domain login link',
-                                                pageTitle: document.title,
-                                                url: window.location.href,
-                                                clickedElement: 'Link: ' + loginLinks[0].href
-                                            };
-                                        }
-                                        
-                                        // If no login links on same domain, just try navigating directly to /login
-                                        debugLog("No same-domain login links found, trying direct navigation to /login");
-                                        const loginUrl = window.location.protocol + '//' + window.location.hostname + '/login/login.htm';
-                                        debugLog("Navigating directly to:", loginUrl);
-                                        window.location.href = loginUrl;
-                                        
-                                        return {
-                                            success: false,
-                                            message: 'No login links found - navigating directly to /login',
-                                            pageTitle: document.title,
-                                            url: window.location.href,
-                                            navigatedTo: loginUrl
-                                        };
-                                    }
-                                    
-                                    debugLog("No interactive elements found on OAuth2 page that look like login triggers");
-                                }
-                                
-                                // Try to find login elements with comprehensive selectors
-                                let usernameField = null;
-                                let passwordField = null;
-                                let submitButton = null;
-                                
-                                // Always attempt login form detection and submission
-                                debugLog("Attempting to find and submit login form...");
-                                if (document.title.includes('Sign In') || 
-                                    document.body.innerHTML.includes('sign') ||
-                                    document.body.innerHTML.includes('login') ||
-                                    document.body.innerHTML.includes('auth') ||
-                                    document.querySelectorAll('input[type="password"]').length > 0 ||
-                                    document.querySelectorAll('input[name="username"]').length > 0) {
-                                    
-                                    // Find login elements with comprehensive selectors
-                                    usernameField = document.getElementById('okta-signin-username') ||
-                                                       document.querySelector('input[name="username"]') ||
-                                                       document.querySelector('input[name="identifier"]') ||
-                                                       document.querySelector('input[type="email"]') ||
-                                                       document.querySelector('input[type="text"]') ||
-                                                       document.querySelector('input[autocomplete="username"]') ||
-                                                       document.querySelector('input[autocomplete="email"]') ||
-                                                       document.querySelector('input[placeholder*="username" i]') ||
-                                                       document.querySelector('input[placeholder*="email" i]') ||
-                                                       document.querySelector('input[data-se="o-form-input-username"]') ||
-                                                       document.querySelector('#username') ||
-                                                       document.querySelector('.username input') ||
-                                                       document.querySelector('[data-testid="username"]');
-                                    
-                                    passwordField = document.getElementById('okta-signin-password') ||
-                                                       document.querySelector('input[name="password"]') ||
-                                                       document.querySelector('input[type="password"]') ||
-                                                       document.querySelector('input[data-se="o-form-input-password"]') ||
-                                                       document.querySelector('#password') ||
-                                                       document.querySelector('.password input') ||
-                                                       document.querySelector('[data-testid="password"]');
-                                    
-                                    submitButton = document.getElementById('okta-signin-submit') ||
-                                                      document.querySelector('input[type="submit"]') ||
-                                                      document.querySelector('button[type="submit"]') ||
-                                                      document.querySelector('.okta-form-submit-button') ||
-                                                      document.querySelector('button.btn-primary') ||
-                                                      document.querySelector('button[data-type="save"]') ||
-                                                      document.querySelector('[data-se="save"]') ||
-                                                      document.querySelector('.login-button') ||
-                                                      document.querySelector('.signin-button') ||
-                                                      document.querySelector('input[value*="Sign"]') ||
-                                                      document.querySelector('[data-testid="signin-submit"]') ||
-                                                      Array.from(document.querySelectorAll('button')).find(btn => 
-                                                          btn.textContent.includes('Sign In') || 
-                                                          btn.textContent.includes('Login') ||
-                                                          btn.textContent.includes('Sign in') ||
-                                                          btn.textContent.includes('SIGN IN')) ||
-                                                      Array.from(document.querySelectorAll('input')).find(inp => 
-                                                          inp.value.includes('Sign') || 
-                                                          inp.value.includes('Login'));
-                                    debugLog("Login form search results:");
-                                    // Username field detection completed
-                                    // Password field detection completed
-                                    debugLog("Submit button found:", !!submitButton, submitButton?.tagName, submitButton?.id, submitButton?.className);
-                                    
-                                    if (usernameField && passwordField && submitButton) {
-                                        debugLog("Filling login form and submitting");
-                                        usernameField.value = username;
-                                        passwordField.value = password;
-                                        
-                                        // Trigger events
-                                        usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                                        usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                                        passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                                        passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-                                        
-                                        setTimeout(() => submitButton.click(), 100);
-                                        return { success: true, message: 'Login form submitted successfully' };
-                                    } else {
-                                        // Enhanced fallback - try to use any available inputs
-                                        debugLog("Primary selectors failed, trying enhanced fallback...");
-                                        
-                                        // Try any text-like input for username if not found
-                                        if (!usernameField) {
-                                            usernameField = allInputs.find(inp => 
-                                                inp.type === 'text' || 
-                                                inp.type === 'email' || 
-                                                inp.type === '' ||
-                                                inp.name?.toLowerCase().includes('user') ||
-                                                inp.id?.toLowerCase().includes('user') ||
-                                                inp.placeholder?.toLowerCase().includes('user') ||
-                                                inp.placeholder?.toLowerCase().includes('email')
-                                            );
-                                            // Fallback username field search completed
-                                        }
-                                        
-                                        // Try any password input if not found
-                                        if (!passwordField) {
-                                            passwordField = allInputs.find(inp => inp.type === 'password');
-                                            // Fallback password field search completed
-                                        }
-                                        
-                                        // Try any button for submit if not found
-                                        if (!submitButton) {
-                                            submitButton = allButtons.find(btn => 
-                                                btn.type === 'submit' ||
-                                                btn.textContent?.toLowerCase().includes('sign') ||
-                                                btn.textContent?.toLowerCase().includes('login') ||
-                                                btn.value?.toLowerCase().includes('sign') ||
-                                                btn.value?.toLowerCase().includes('login')
-                                            ) || allButtons[0]; // Use first button as last resort
-                                            debugLog("Fallback submit button:", submitButton ? {tag: submitButton.tagName, type: submitButton.type, text: submitButton.textContent?.substring(0,30)} : 'none');
-                                        }
-                                        
-                                        if (usernameField && passwordField && submitButton) {
-                                            debugLog("Using fallback fields for login");
-                                            usernameField.value = username;
-                                            passwordField.value = password;
-                                            
-                                            usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                                            usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                                            passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                                            passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-                                            
-                                            setTimeout(() => submitButton.click(), 100);
-                                            return { success: true, message: 'Login form submitted using enhanced fallback' };
-                                        }
-                                    }
-                                } else {
-                                    debugLog("Page doesn't look like a typical login page, but trying to find login fields anyway...");
-                                }
-                                
-                                // Always try to find login fields as a last resort, regardless of page detection
-                                debugLog("Final attempt: searching for any login fields on page...");
-                                if (!usernameField && !passwordField) {
-                                    usernameField = document.querySelector('input[type="text"]') || 
-                                                   document.querySelector('input[type="email"]') ||
-                                                   document.querySelector('input[name*="user"]') ||
-                                                   document.querySelector('input[id*="user"]');
-                                    
-                                    passwordField = document.querySelector('input[type="password"]');
-                                    
-                                    submitButton = document.querySelector('button[type="submit"]') ||
-                                                  document.querySelector('input[type="submit"]') ||
-                                                  document.querySelector('button');
-                                    
-                                    if (usernameField && passwordField && submitButton) {
-                                        debugLog("Found login fields in final attempt - submitting");
-                                        usernameField.value = username;
-                                        passwordField.value = password;
-                                        
-                                        usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                                        usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                                        passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                                        passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-                                        
-                                        setTimeout(() => submitButton.click(), 100);
-                                        return { success: true, message: 'Login form submitted (final attempt)' };
-                                    }
-                                }
-                                
-                                return { 
-                                    success: false, 
-                                    message: 'Could not find or submit login form',
-                                    pageTitle: document.title,
-                                    url: window.location.href,
-                                    foundUsername: !!usernameField,
-                                    foundPassword: !!passwordField,
-                                    foundSubmit: !!submitButton,
-                                    // Add analysis details to see what's actually on the page
-                                    analysis: {
-                                        totalInputs: allInputs.length,
-                                        totalButtons: allButtons.length,
-                                        totalForms: document.querySelectorAll('form').length,
-                                        bodyPreview: document.body ? document.body.textContent.substring(0, 200) : 'NO BODY',
-                                        isOAuth2Page: window.location.href.includes('/oauth2') || window.location.href.includes('/authorize'),
-                                        hasPasswordInput: document.querySelectorAll('input[type="password"]').length > 0,
-                                        hasUsernameInput: document.querySelectorAll('input[name="username"], input[type="email"], input[type="text"]').length > 0,
-                                        clickableElements: Array.from(document.querySelectorAll('*[onclick], button, input, a, [role="button"]')).length
-                                    }
-                                };
-                                } catch (error) {
-                                    debugLog("CAUGHT ERROR IN SCRIPT:", error);
-                                    debugLog("Error message:", error.message);
-                                    debugLog("Error stack:", error.stack);
-                                    return {
-                                        success: false,
-                                        message: 'Script error: ' + error.message,
-                                        pageTitle: document.title,
-                                        url: window.location.href
-                                    };
-                                }
-                            },
-                            args: [username, password]
-                        }).then((results) => {
-                            debugLog("Login injection raw results:", results);
-                            
-                            if (!results || results.length === 0) {
-                                chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login script returned no results"}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                chrome.tabs.remove(tabId);
-                                return;
-                            }
-                            
-                            const result = results[0]?.result;
-                            debugLog("Login injection result:", result);
-                            
-                            // Log detailed analysis if available
-                            if (result?.analysis) {
-                                debugLog("=== PAGE ANALYSIS SUMMARY ===");
-                                debugLog("Page title:", result.pageTitle || 'EMPTY');
-                                debugLog("URL:", result.url || 'UNKNOWN');
-                                debugLog("Is OAuth2 page:", result.analysis.isOAuth2Page);
-                                debugLog("Total inputs:", result.analysis.totalInputs);
-                                debugLog("Total buttons:", result.analysis.totalButtons);
-                                debugLog("Total forms:", result.analysis.totalForms);
-                                // Login form analysis completed
-                                debugLog("Clickable elements:", result.analysis.clickableElements);
-                                debugLog("Body preview:", result.analysis.bodyPreview);
-                                debugLog("=== END ANALYSIS ===");
-                                
-                                // Check if we're already on an authenticated dashboard page
-                                if (result.url && (result.url.includes('/app/UserHome') || result.url.includes('session_hint=AUTHENTICATED'))) {
-                                    debugLog("🎉 Already authenticated and on dashboard! Skipping login and loading applications directly.");
-                                    chrome.storage.local.set({"oauth2LoginCompleted": true}); // Mark login as completed
-                                    chrome.storage.local.set({"login_status": {"status": "success", "message": "Already logged in - loading applications..."}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    
-                                    // Since the tab keeps reverting to OAuth2, try direct service worker API call
-                                    chrome.storage.local.get(["settings"], function(storage){
-                                        if (storage.settings && storage.settings.okta_domain) {
-                                            const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
-                                            
-                                            // Try direct fetch from service worker first
-                                            fetch(list_apps_url, {
-                                                method: 'GET',
-                                                credentials: 'include',
-                                                headers: {
-                                                    'Accept': 'application/json',
-                                                    'Content-Type': 'application/json'
-                                                }
-                                            }).then(response => {
-                                                if (response.ok) {
-                                                    return response.json().then(okta_tabs => {
-                                                        chrome.storage.local.set({"okta_apps_status": {"status": "success", "apps": okta_tabs}});
-                                                        safeSendMessage({"method": "UpdateOktaApps"});
-                                                        chrome.tabs.remove(tabId); // Close the problematic tab
-                                                        
-                                                        if (callback) {
-                                                            callback(callback_argument);
-                                                        }
-                                                    });
-                                                } else {
-                                                    debugLog("Service worker API failed, falling back to tab-based approach");
-                                                    // Fall back to tab-based approach as last resort
-                                                    setTimeout(() => {
-                                                        makeOktaApiCall(tabId, list_apps_url, true);
-                                                    }, 2000);
-                                                }
-                                            }).catch(error => {
-                                                debugLog("Service worker API error:", error.message, "- falling back to tab approach");
-                                                // Fall back to tab-based approach
-                                                setTimeout(() => {
-                                                    makeOktaApiCall(tabId, list_apps_url, true);
-                                                }, 2000);
-                                            });
-                                        }
-                                    });
-                                    return; // Skip the rest of the login logic
-                                }
-                            }
-                            
-                            if (!result) {
-                                chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login script execution failed - no result object"}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                chrome.tabs.remove(tabId);
-                                return;
-                            }
-                            
-                            if (result.isOAuth2) {
-                                // We're on an OAuth2 page - start monitoring immediately for login fields
-                                debugLog("Detected OAuth2 page - monitoring for login fields to inject credentials");
-                                chrome.storage.local.set({"login_status": {"status": "progress", "message": "Looking for login fields on page..."}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                
-                                // Start monitoring immediately - no delays
-                                monitorOktaLogin(tabId, callback, callback_argument);
-                            } else if (result.success) {
-                                if (result.alreadyLoggedIn && !skipApiCheck) {
-                                    // Verify API access before claiming success
-                                    chrome.storage.local.set({"login_status": {"status": "progress", "message": "Verifying API access..."}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    
-                                    // Test API access from within the tab context
-                                    chrome.storage.local.get(["settings"], function(storage){
-                                        if (storage.settings && storage.settings.okta_domain) {
-                                            const test_api_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs";
-                                            
-                                            // Test API access from within the tab
-                                            chrome.scripting.executeScript({
-                                                target: {tabId: tabId},
-                                                func: (apiUrl) => {
-                                                    debugLog("Testing API access to:", apiUrl);
-                                                    debugLog("Current page URL:", window.location.href);
-                                                    return fetch(apiUrl, {
-                                                        method: 'GET',
-                                                        credentials: 'include'
-                                                    }).then(response => {
-                                                        debugLog("API test response status:", response.status);
-                                                        return {
-                                                            success: response.ok,
-                                                            status: response.status,
-                                                            url: window.location.href,
-                                                            title: document.title
-                                                        };
-                                                    }).catch(error => {
-                                                        debugLog("API test error:", error.message);
-                                                        return {
-                                                            success: false,
-                                                            error: error.message,
-                                                            url: window.location.href,
-                                                            title: document.title
-                                                        };
-                                                    });
-                                                },
-                                                args: [test_api_url]
-                                            }).then((results) => {
-                                                const apiResult = results[0].result;
-                                                if (apiResult.success) {
-                                                    // API access works - truly logged in
-                                                    chrome.storage.local.set({"oauth2LoginCompleted": true}); // Mark login as completed
-                                                    chrome.storage.local.set({"login_status": {"status": "success", "message": "Login successful!"}});
-                                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                                    
-                                                    // Navigate to dashboard to get proper session before loading apps
-                                                    const dashboardUrl = "https://" + storage.settings.okta_domain + "/app/UserHome";
-                                                    debugLog("Navigating to dashboard for proper session:", dashboardUrl);
-                                                    
-                                                    chrome.tabs.update(tabId, {url: dashboardUrl}, function() {
-                                                        debugLog("Tab navigation initiated, waiting for dashboard to load...");
-                                                        // Use navigation verification instead of fixed timeout
-                                                        waitForTabNavigation(tabId, dashboardUrl, function(success) {
-                                                            if (success) {
-                                                                debugLog("Dashboard navigation confirmed, establishing session...");
-                                                                // Refresh the dashboard page to ensure session is fully established
-                                                                chrome.tabs.reload(tabId, function() {
-                                                                    debugLog("Dashboard page refreshed, waiting for session establishment...");
-                                                                    // Wait longer for session to be fully established
-                                                                    setTimeout(() => {
-                                                                        debugLog("Session establishment complete, auto-loading applications (API verification path)");
-                                                                        const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
-                                                                        makeOktaApiCall(tabId, list_apps_url, true); // closeTab = true after apps loaded
-                                                                    }, 5000); // Increased wait time to 5 seconds
-                                                                });
-                                                            } else {
-                                                                debugLog("Dashboard navigation failed, closing tab");
-                                                                chrome.storage.local.set({"okta_apps_status": {"status": "failed", "message": "Failed to navigate to dashboard for app loading"}});
-                                                                safeSendMessage({"method": "UpdateOktaApps"});
-                                                                chrome.tabs.remove(tabId);
-                                                            }
-                                                        });
-                                                    });
-                                                    
-                                                    if (callback) {
-                                                        callback(callback_argument);
-                                                    }
-                                                } else {
-                                                    // API access failed - need to actually log in
-                                                    chrome.storage.local.set({"login_status": {"status": "progress", "message": "Session expired, logging in..."}});
-                                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                                    
-                                                    // Continue with normal login flow by restarting the login process
-                                                    chrome.tabs.update(tabId, {url: "https://" + storage.settings.okta_domain + "/"}, function() {
-                                                        // Wait a bit then retry login with API check disabled
-                                                        setTimeout(async () => {
-                                                            const password = await getDecryptedPassword(storage.settings.okta_password, storage.settings.okta_domain);
-                                                            handleLoginTab(tabId, callback, callback_argument, storage.settings.okta_username, password, true);
-                                                        }, 2000);
-                                                    });
-                                                }
-                                            }).catch(error => {
-                                                // API test script injection failed - try normal login
-                                                chrome.storage.local.set({"login_status": {"status": "progress", "message": "API test failed, retrying login..."}});
-                                                try {
-                                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                                } catch (e) {
-                                                    debugLog("Popup not open, continuing in background");
-                                                }
-                                                
-                                                // Continue with normal login flow
-                                                chrome.tabs.update(tabId, {url: "https://" + storage.settings.okta_domain + "/"}, function() {
-                                                    setTimeout(async () => {
-                                                        const password = await getDecryptedPassword(storage.settings.okta_password, storage.settings.okta_domain);
-                                                        handleLoginTab(tabId, callback, callback_argument, storage.settings.okta_username, password, true);
-                                                    }, 2000);
-                                                });
-                                            });
-                                        } else {
-                                            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Settings not found"}});
-                                            safeSendMessage({"method": "UpdateLoginStatus"});
-                                            chrome.tabs.remove(tabId);
-                                        }
-                                    });
-                                } else if (result.alreadyLoggedIn && skipApiCheck) {
-                                    // Skip API check this time and assume success
-                                    chrome.storage.local.set({"oauth2LoginCompleted": true}); // Mark login as completed
-                                    chrome.storage.local.set({"login_status": {"status": "success", "message": "Login successful!"}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    
-                                    // Navigate to dashboard to get proper session before loading apps
-                                    chrome.storage.local.get(["settings"], function(storage){
-                                        if (storage.settings && storage.settings.okta_domain) {
-                                            const dashboardUrl = "https://" + storage.settings.okta_domain + "/app/UserHome";
-                                            debugLog("Navigating to dashboard for proper session:", dashboardUrl);
-                                            
-                                            chrome.tabs.update(tabId, {url: dashboardUrl}, function() {
-                                                debugLog("Tab navigation initiated, waiting for dashboard to load...");
-                                                // Use navigation verification instead of fixed timeout
-                                                waitForTabNavigation(tabId, dashboardUrl, function(success) {
-                                                    if (success) {
-                                                        debugLog("Dashboard navigation confirmed, establishing session...");
-                                                        // Refresh the dashboard page to ensure session is fully established
-                                                        chrome.tabs.reload(tabId, function() {
-                                                            debugLog("Dashboard page refreshed, waiting for session establishment...");
-                                                            // Wait longer for session to be fully established
-                                                            setTimeout(() => {
-                                                                debugLog("Session establishment complete, auto-loading applications (skipApiCheck path)");
-                                                                const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
-                                                                makeOktaApiCall(tabId, list_apps_url, true); // closeTab = true after apps loaded
-                                                            }, 5000); // Increased wait time to 5 seconds
-                                                        });
-                                                    } else {
-                                                        debugLog("Dashboard navigation failed, closing tab");
-                                                        chrome.storage.local.set({"okta_apps_status": {"status": "failed", "message": "Failed to navigate to dashboard for app loading"}});
-                                                        safeSendMessage({"method": "UpdateOktaApps"});
-                                                        chrome.tabs.remove(tabId);
-                                                    }
-                                                });
-                                            });
-                                        } else {
-                                            chrome.tabs.remove(tabId);
-                                        }
-                                        
-                                        if (callback) {
-                                            callback(callback_argument);
-                                        }
-                                    });
-                                } else {
-                                    // Login form was submitted
-                                    chrome.storage.local.set({"login_status": {"status": "progress", "message": "Logging in to Okta..."}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    
-                                    // Monitor for login completion or MFA
-                                    monitorOktaLogin(tabId, callback, callback_argument);
-                                }
-                            } else {
-                                // Check if we navigated to a new page - if so, start monitoring
-                                if (result.navigatedTo) {
-                                    debugLog("Navigated to new page, starting monitoring:", result.navigatedTo);
-                                    chrome.storage.local.set({"login_status": {"status": "progress", "message": "Navigated to login page, looking for login fields..."}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    
-                                    // Wait for navigation to complete then start monitoring
-                                    setTimeout(() => {
-                                        debugLog("Starting monitoring after navigation");
-                                        monitorOktaLogin(tabId, callback, callback_argument);
-                                    }, 3000);
-                                } else {
-                                    chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login form not found: " + result.message}});
-                                    safeSendMessage({"method": "UpdateLoginStatus"});
-                                    chrome.tabs.remove(tabId);
-                                }
-                            }
-                        }).catch(error => {
-                            // Login injection failed
-                            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login injection failed: " + error.message}});
-                            safeSendMessage({"method": "UpdateLoginStatus"});
-                            chrome.tabs.remove(tabId);
-                        });
-                    }
-                }).catch(error => {
-                    // Tab readiness check failed
-                    clearInterval(login_timer);
-                    chrome.storage.local.set({"login_status": {"status": "failed", "message": "Tab loading failed: " + error.message}});
-                    safeSendMessage({"method": "UpdateLoginStatus"});
-                    chrome.tabs.remove(tabId);
-                });
-            }, 1000);
-}
-
-function waitForTabNavigation(tabId, _expectedUrl, callback) {
-    let attempts = 0;
-    const maxAttempts = 15; // 15 seconds total wait time
-    
-    const checkNavigation = setInterval(function() {
-        attempts++;
-        
-        chrome.tabs.get(tabId, function(tab) {
-            if (chrome.runtime.lastError) {
-                debugLog("Tab no longer exists during navigation wait");
-                clearInterval(checkNavigation);
-                callback(false);
-                return;
-            }
-            
-            debugLog(`Navigation check ${attempts}/${maxAttempts}: Current URL: ${tab.url}`);
-            
-            // Check if we've successfully navigated to the expected URL or a related dashboard URL
-            if (tab.url.includes('/app/UserHome') || tab.url.includes('/dashboard') || tab.url.includes('/user/profile')) {
-                debugLog("Successfully navigated to dashboard-like page");
-                clearInterval(checkNavigation);
-                callback(true);
-                return;
-            }
-            
-            // If we've waited long enough, give up
-            if (attempts >= maxAttempts) {
-                debugLog("Navigation timeout - giving up");
-                clearInterval(checkNavigation);
-                callback(false);
-                return;
-            }
-        });
-    }, 1000);
-}
-
-function monitorOktaLogin(tabId, callback, callback_argument) {
-    let monitorCount = 0;
-    
-    const monitor_timer = setInterval(function() {
-        monitorCount++;
-        chrome.scripting.executeScript({
-            target: {tabId: tabId},
-            func: () => {
-                // Simple check: look for login fields and inject credentials immediately
-                const url = window.location.href;
-                const title = document.title;
-                
-                // Look for username field
-                const hasUsernameField = !!(document.getElementById('okta-signin-username') ||
-                                           document.querySelector('input[name="username"]') ||
-                                           document.querySelector('input[name="identifier"]') ||
-                                           document.querySelector('input[type="email"]') ||
-                                           document.querySelector('input[type="text"]'));
-                
-                // Look for password field
-                const hasPasswordField = !!(document.getElementById('okta-signin-password') ||
-                                           document.querySelector('input[name="password"]') ||
-                                           document.querySelector('input[type="password"]'));
-                
-                // Check for MFA challenge
-                const mfaElement = document.querySelector('[data-se="factor-push"]') || 
-                                 document.querySelector('.okta-verify-challenge') ||
-                                 document.querySelector('[data-se="mfa-verify-passcode"]');
-                
-                // Check for successful login (dashboard)
-                const isLoggedIn = (url.includes('/app/') || 
-                                  url.includes('/dashboard') || 
-                                  url.includes('/user/profile') ||
-                                  title.includes('Dashboard') ||
-                                  document.querySelector('.okta-dashboard')) &&
-                                  !url.includes('/oauth2') &&
-                                  !url.includes('/authorize') &&
-                                  !url.includes('/callback');
-                
-                // Check for login error
-                const errorElement = document.querySelector('.okta-form-infobox-error') ||
-                                   document.querySelector('[data-se="errors-container"]') ||
-                                   document.querySelector('.error-16');
-                
-                return {
-                    url: url,
-                    title: title,
-                    hasUsernameField: hasUsernameField,
-                    hasPasswordField: hasPasswordField,
-                    hasMFA: !!mfaElement,
-                    isLoggedIn: isLoggedIn,
-                    hasError: !!errorElement,
-                    errorText: errorElement ? errorElement.textContent : null
-                };
-            }
-        }).then((results) => {
-            const state = results[0].result;
-            debugLog(`Monitoring state (attempt ${monitorCount}):`, state);
-            
-            // Add debugging every few attempts to see what's on the page
-            if (monitorCount % 5 === 1) {
-                debugLog(`=== DEBUG: What's on the page (attempt ${monitorCount}) ===`);
-                chrome.scripting.executeScript({
-                    target: {tabId: tabId},
-                    func: () => {
-                        const inputs = Array.from(document.querySelectorAll('input'));
-                        const buttons = Array.from(document.querySelectorAll('button'));
-                        
-                        return {
-                            url: window.location.href,
-                            title: document.title,
-                            inputs: inputs.map(inp => ({
-                                type: inp.type,
-                                name: inp.name,
-                                id: inp.id,
-                                placeholder: inp.placeholder,
-                                value: inp.value,
-                                className: inp.className
-                            })),
-                            buttons: buttons.map(btn => ({
-                                type: btn.type,
-                                id: btn.id,
-                                text: btn.textContent?.substring(0, 30)
-                            })),
-                            bodyPreview: document.body?.textContent?.substring(0, 100),
-                            forms: Array.from(document.querySelectorAll('form')).map(form => ({
-                                id: form.id,
-                                action: form.action,
-                                method: form.method,
-                                innerHTML: form.innerHTML.substring(0, 200)
-                            })),
-                            allElements: Array.from(document.querySelectorAll('*[type="text"], *[type="email"], *[type="password"], *[name*="user"], *[name*="email"], *[name*="pass"]')).map(el => ({
-                                tagName: el.tagName,
-                                type: el.type,
-                                name: el.name,
-                                id: el.id,
-                                placeholder: el.placeholder
-                            }))
-                        };
-                    }
-                }).then((debugResults) => {
-                    const debug = debugResults[0].result;
-                    debugLog(`Page URL: ${debug.url}`);
-                    debugLog(`Page Title: ${debug.title}`);
-                    debugLog(`Body Preview: ${debug.bodyPreview}`);
-                    debugLog(`Inputs (${debug.inputs.length}):`, debug.inputs);
-                    debugLog(`Buttons (${debug.buttons.length}):`, debug.buttons);
-                    debugLog(`Forms (${debug.forms.length}):`, debug.forms);
-                    debugLog(`All login-related elements (${debug.allElements.length}):`, debug.allElements);
-                }).catch(err => debugLog("Debug failed:", err.message));
-            }
-            
-            // If we find login fields, inject credentials immediately
-            if (state.hasUsernameField && state.hasPasswordField) {
-                debugLog("Login fields found - injecting credentials immediately");
-                clearInterval(monitor_timer);
-                
-                chrome.storage.local.set({"login_status": {"status": "progress", "message": "Auto-filling login credentials..."}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                
-                chrome.storage.local.get(["settings"], async function(storage){
-                    if (storage.settings && storage.settings.okta_username && storage.settings.okta_password) {
-                        const password = await getDecryptedPassword(storage.settings.okta_password, storage.settings.okta_domain);
-                        chrome.scripting.executeScript({
-                            target: {tabId: tabId},
-                            func: (username, password) => {
-                                debugLog("Injecting credentials on page:", window.location.href);
-
-                                // Find fields
-                                const usernameField = document.getElementById('okta-signin-username') ||
-                                                     document.querySelector('input[name="username"]') ||
-                                                     document.querySelector('input[name="identifier"]') ||
-                                                     document.querySelector('input[type="email"]') ||
-                                                     document.querySelector('input[type="text"]');
-
-                                const passwordField = document.getElementById('okta-signin-password') ||
-                                                     document.querySelector('input[name="password"]') ||
-                                                     document.querySelector('input[type="password"]');
-
-                                const submitButton = document.getElementById('okta-signin-submit') ||
-                                                    document.querySelector('input[type="submit"]') ||
-                                                    document.querySelector('button[type="submit"]') ||
-                                                    document.querySelector('button');
-
-                                if (usernameField && passwordField && submitButton) {
-                                    debugLog("Filling and submitting login form");
-                                    usernameField.value = username;
-                                    passwordField.value = password;
-
-                                    // Trigger events
-                                    usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                                    usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                                    passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                                    passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-
-                                    // Submit
-                                    setTimeout(() => submitButton.click(), 500);
-                                    return { success: true };
-                                }
-                                return { success: false, message: 'Could not find all form fields' };
-                            },
-                            args: [storage.settings.okta_username, password]
-                        }).then((results) => {
-                            const fillResult = results[0].result;
-                            if (fillResult.success) {
-                                chrome.storage.local.set({"login_status": {"status": "progress", "message": "Credentials submitted, waiting for login..."}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                
-                                // Continue monitoring for completion
-                                setTimeout(() => {
-                                    monitorOktaLogin(tabId, callback, callback_argument);
-                                }, 2000);
-                            } else {
-                                chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to inject credentials: " + fillResult.message}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                chrome.tabs.remove(tabId);
-                            }
-                        }).catch(error => {
-                            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Credential injection error: " + error.message}});
-                            safeSendMessage({"method": "UpdateLoginStatus"});
-                            chrome.tabs.remove(tabId);
-                        });
-                    } else {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login credentials not configured"}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        chrome.tabs.remove(tabId);
-                    }
-                });
-                return;
-            }
-            
-            if (state.hasError) {
-                clearInterval(monitor_timer);
-                chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed: " + state.errorText}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                chrome.tabs.remove(tabId);
-            } else if (state.hasMFA) {
-                chrome.storage.local.set({"login_status": {"status": "progress", "message": "MFA challenge detected. Please complete authentication."}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                // Continue monitoring for MFA completion
-            } else if (state.isLoggedIn) {
-                clearInterval(monitor_timer);
-                chrome.storage.local.set({"oauth2LoginCompleted": true}); // Mark login as completed
-                chrome.storage.local.set({"login_status": {"status": "success", "message": "Login successful!"}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-
-                // Login successful - apps will now load with final badge update
-                
-                // Show success notification
-                chrome.notifications.create({
-                    type: 'basic',
-                    iconUrl: 'Icons/aws-logo.png',
-                    title: 'AWS Account Switcher',
-                    message: 'Login successful! Applications loading...'
-                });
-                
-                // Original tab return is handled by credential injection logic
-                
-                // Load apps directly from current dashboard page (only once per session)
-                chrome.storage.local.get(["settings", "appsAlreadyLoading"], function(storage){
-                    if (storage.settings && storage.settings.okta_domain && !storage.appsAlreadyLoading) {
-                        // Update badge to show apps loading
-                        chrome.action.setBadgeText({text: "📱"});
-                        chrome.action.setBadgeBackgroundColor({color: "#9C27B0"});
-                        
-                        // Set flag to prevent multiple loading attempts
-                        chrome.storage.local.set({"appsAlreadyLoading": true});
-                        
-                        const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
-                        makeOktaApiCall(tabId, list_apps_url, true);
-                    } else {
-                        chrome.tabs.remove(tabId);
-                    }
-                    
-                    if (callback) {
-                        callback(callback_argument);
-                    }
-                });
-            }
-        }).catch(error => {
-            clearInterval(monitor_timer);
-            chrome.storage.local.set({"login_status": {"status": "failed", "message": "Monitoring failed: " + error.message}});
-            safeSendMessage({"method": "UpdateLoginStatus"});
-            chrome.tabs.remove(tabId);
-        });
-    }, 1000); // Check every 1 second
-    
-    // Timeout after 30 seconds
-    setTimeout(() => {
-        clearInterval(monitor_timer);
-        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login process timed out after 30 seconds"}});
-        safeSendMessage({"method": "UpdateLoginStatus"});
-        chrome.tabs.remove(tabId);
-    }, 30000);
-}
 
 function startManualLoginMonitoring(tabId, callback, callback_argument) {
     chrome.storage.local.set({"login_status": {"status": "progress", "message": "Please complete login in the opened tab..."}});
@@ -2375,431 +1458,6 @@ function startManualLoginMonitoring(tabId, callback, callback_argument) {
     }, 300000);
 }
 
-function waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth = 0) {
-    // Prevent infinite recursion
-    if (recursionDepth >= 5) {
-        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login process took too long"}});
-        safeSendMessage({"method": "UpdateLoginStatus"});
-        chrome.tabs.remove(tabId);
-        return;
-    }
-
-    // On first call (recursionDepth === 0), set up the login tracking flag
-    // This flag is used to prevent the timeout from overwriting a successful login status
-    if (recursionDepth === 0) {
-        chrome.storage.local.set({"oauth2LoginCompleted": false});
-    }
-
-    // Store flag in Chrome storage to persist across recursive calls
-    chrome.storage.local.get(["hasReturnedToOriginalTab"], function(result) {
-        if (!result.hasReturnedToOriginalTab) {
-            chrome.storage.local.set({"hasReturnedToOriginalTab": false});
-        }
-    });
-    
-    // Make tab active briefly so login form loads properly
-    chrome.tabs.update(tabId, { active: true }, function() {
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Loading login form..."}});
-        safeSendMessage({"method": "UpdateLoginStatus"});
-        
-        // Tab will return to original after login fields are found and injected
-    });
-    
-    let monitorCount = 0;
-    
-    // Give the page 2 seconds to detect tab activation and load forms
-    setTimeout(() => {
-        const monitor_timer = setInterval(function() {
-            monitorCount++;
-        
-        chrome.scripting.executeScript({
-            target: {tabId: tabId},
-            func: () => {
-                const url = window.location.href;
-                const title = document.title;
-                
-                // Wait for dynamic content to load
-                const readyState = document.readyState;
-                const bodyHTML = document.body ? document.body.innerHTML.length : 0;
-                
-                // Look for ANY form inputs that could be login fields
-                const allInputs = Array.from(document.querySelectorAll('input'));
-                const visibleInputs = allInputs.filter(inp => 
-                    inp.style.display !== 'none' && 
-                    inp.type !== 'hidden' &&
-                    inp.offsetWidth > 0 && 
-                    inp.offsetHeight > 0
-                );
-                
-                // Enhanced search for login elements - check common OAuth2/Okta selectors
-                let usernameField = visibleInputs.find(inp => 
-                    inp.type === 'text' || 
-                    inp.type === 'email' ||
-                    inp.name?.toLowerCase().includes('user') ||
-                    inp.name?.toLowerCase().includes('email') ||
-                    inp.id?.toLowerCase().includes('user') ||
-                    inp.id?.toLowerCase().includes('email') ||
-                    inp.placeholder?.toLowerCase().includes('user') ||
-                    inp.placeholder?.toLowerCase().includes('email') ||
-                    inp.autocomplete?.toLowerCase().includes('user') ||
-                    inp.autocomplete?.toLowerCase().includes('email')
-                );
-                
-                // Also check for ANY visible text input if no username field found specifically
-                if (!usernameField && visibleInputs.length > 0) {
-                    usernameField = visibleInputs.find(inp => inp.type === 'text' || inp.type === 'email' || inp.type === '');
-                }
-                
-                // Look for password fields
-                const passwordField = visibleInputs.find(inp => inp.type === 'password');
-                
-                // Enhanced button search - look for more button types and text content
-                const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"], a.btn'));
-                const submitButtons = allButtons.filter(btn =>
-                    btn.style.display !== 'none' && 
-                    btn.offsetWidth > 0 && 
-                    btn.offsetHeight > 0 &&
-                    !btn.disabled
-                );
-                
-                // Check if already logged in
-                const isLoggedIn = (url.includes('/app/') || 
-                                  url.includes('/dashboard') || 
-                                  title.includes('Dashboard')) &&
-                                  !url.includes('/oauth2');
-                
-                // Debug: Check for any interactive elements if no forms found
-                const allInteractiveElements = Array.from(document.querySelectorAll('input, button, select, textarea, [role="button"], [onclick]'));
-                const formsCount = document.querySelectorAll('form').length;
-                const iframesCount = document.querySelectorAll('iframe').length;
-                
-                // Check if page is still loading content dynamically
-                const hasSpinners = document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="progress"]').length > 0;
-                const hasScripts = document.querySelectorAll('script').length;
-                
-                return {
-                    url: url,
-                    title: title,
-                    hasUsernameField: !!usernameField,
-                    hasPasswordField: !!passwordField,
-                    hasSubmitButton: submitButtons.length > 0,
-                    isLoggedIn: isLoggedIn,
-                    visibleInputsCount: visibleInputs.length,
-                    buttonsCount: submitButtons.length,
-                    // Debug info for dynamic content
-                    readyState: readyState,
-                    bodyHTMLLength: bodyHTML,
-                    totalInteractiveElements: allInteractiveElements.length,
-                    formsCount: formsCount,
-                    iframesCount: iframesCount,
-                    hasSpinners: hasSpinners,
-                    scriptsCount: hasScripts,
-                    // Sample of page content for debugging
-                    bodyTextSample: document.body ? document.body.textContent.substring(0, 500) : 'NO BODY',
-                    // Return the actual elements for injection if found
-                    usernameSelector: usernameField ? getSelector(usernameField) : null,
-                    passwordSelector: passwordField ? getSelector(passwordField) : null,
-                    submitSelector: submitButtons.length > 0 ? getSelector(submitButtons[0]) : null
-                };
-                
-                function getSelector(element) {
-                    if (element.id) return '#' + element.id;
-                    if (element.name) return '[name="' + element.name + '"]';
-                    if (element.className) return '.' + element.className.split(' ')[0];
-                    return element.tagName.toLowerCase();
-                }
-            }
-        }).then((results) => {
-            if (!results || results.length === 0 || !results[0] || results[0].result === null) {
-                return; // Skip this attempt, tab is still loading
-            }
-            
-            const state = results[0].result;
-            
-            // If already logged in, success
-            if (state.isLoggedIn) {
-                clearInterval(monitor_timer);
-                chrome.storage.local.set({"oauth2LoginCompleted": true}); // Mark login as completed to prevent timeout from overwriting
-                chrome.storage.local.set({"login_status": {"status": "success", "message": "Already logged in!"}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                
-                chrome.storage.local.get(["settings"], function(storage){
-                    if (storage.settings && storage.settings.okta_domain) {
-                        const list_apps_url = "https://" + storage.settings.okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
-                        makeOktaApiCall(tabId, list_apps_url, true);
-                    }
-                    if (callback) callback(callback_argument);
-                });
-                return;
-            }
-            
-            // Check if this is an OAuth2 authorization page that needs to be clicked through
-            if (state.url.includes('/oauth2/') && !state.hasUsernameField && !state.hasPasswordField && state.hasSubmitButton) {
-                clearInterval(monitor_timer);
-                
-                // Try to click any authorization/continue button
-                chrome.scripting.executeScript({
-                    target: {tabId: tabId},
-                    func: () => {
-                        // Look for common OAuth2 authorization buttons
-                        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'));
-                        const authButton = buttons.find(btn => 
-                            btn.textContent?.toLowerCase().includes('continue') ||
-                            btn.textContent?.toLowerCase().includes('authorize') ||
-                            btn.textContent?.toLowerCase().includes('allow') ||
-                            btn.textContent?.toLowerCase().includes('next') ||
-                            btn.value?.toLowerCase().includes('continue') ||
-                            btn.value?.toLowerCase().includes('authorize')
-                        );
-                        
-                        if (authButton && authButton.offsetWidth > 0 && authButton.offsetHeight > 0) {
-                            authButton.click();
-                            return { success: true, buttonText: authButton.textContent || authButton.value };
-                        }
-                        
-                        return { success: false, availableButtons: buttons.map(b => b.textContent || b.value).filter(t => t) };
-                    }
-                }).then((clickResults) => {
-                    if (clickResults[0]?.result?.success) {
-                        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Authorization clicked, waiting for login form..."}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        
-                        // Continue monitoring after clicking authorization
-                        setTimeout(() => {
-                            waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth + 1);
-                        }, 2000);
-                    } else {
-                        // Continue monitoring anyway
-                        setTimeout(() => {
-                            waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth + 1);
-                        }, 3000);
-                    }
-                }).catch(error => {
-                    // Continue monitoring anyway
-                    setTimeout(() => {
-                        waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth + 1);
-                    }, 3000);
-                });
-                return;
-            }
-            
-            // If we found login fields (prioritize username/password fields over just submit buttons)
-            if (state.hasUsernameField || state.hasPasswordField) {
-                clearInterval(monitor_timer);
-                
-                chrome.storage.local.set({"login_status": {"status": "progress", "message": "Auto-filling login credentials..."}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                
-                // Update badge to show credentials being filled
-                chrome.action.setBadgeText({text: "📝"});
-                chrome.action.setBadgeBackgroundColor({color: "#FF9800"});
-                
-                // Return to original tab now that we found the form and are injecting (only once)
-                chrome.storage.local.get(["hasReturnedToOriginalTab"], function(returnResult) {
-                    if (!returnResult.hasReturnedToOriginalTab) {
-                        chrome.storage.local.set({"hasReturnedToOriginalTab": true});
-                        chrome.storage.local.get(["originalTab"], function(tabResult) {
-                            if (tabResult.originalTab && tabResult.originalTab.id) {
-                                setTimeout(() => {
-                                    chrome.tabs.update(tabResult.originalTab.id, { active: true }).catch(() => {
-                                        // Original tab may have been closed, that's OK
-                                    });
-                                }, 100); // Small delay to ensure credential injection starts
-                            }
-                        });
-                    }
-                });
-                
-                // Inject credentials
-                chrome.scripting.executeScript({
-                    target: {tabId: tabId},
-                    func: (username, password, userSel, passSel, submitSel) => {
-                        
-                        let filled = false;
-                        let usernameField = null;
-                        let passwordField = null;
-                        let submitButton = null;
-                        
-                        // Get the actual fields
-                        if (userSel) {
-                            usernameField = document.querySelector(userSel);
-                        }
-                        if (passSel) {
-                            passwordField = document.querySelector(passSel);
-                        }
-                        if (submitSel) {
-                            submitButton = document.querySelector(submitSel);
-                        }
-                        
-                        // Multi-step OAuth2 flow handling:
-                        // Step 1: If only username field is present, fill it and click Next
-                        if (usernameField && !passwordField) {
-                            usernameField.value = username;
-                            usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                            usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                            filled = true;
-                            
-                            if (submitButton) {
-                                setTimeout(() => {
-                                    submitButton.click();
-                                }, 300);
-                                return { success: true, action: 'username_submitted', step: 'username_next' };
-                            }
-                        }
-                        // Step 2: If only password field is present, fill it and submit
-                        else if (passwordField && !usernameField) {
-                            passwordField.value = password;
-                            passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                            passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-                            filled = true;
-                            
-                            if (submitButton) {
-                                setTimeout(() => {
-                                    submitButton.click();
-                                }, 300);
-                                return { success: true, action: 'password_submitted', step: 'login_complete' };
-                            }
-                        }
-                        // Step 3: Both fields present - fill both and submit (single-step login)
-                        else if (usernameField && passwordField) {
-                            usernameField.value = username;
-                            usernameField.dispatchEvent(new Event('input', {bubbles: true}));
-                            usernameField.dispatchEvent(new Event('change', {bubbles: true}));
-                            
-                            passwordField.value = password;
-                            passwordField.dispatchEvent(new Event('input', {bubbles: true}));
-                            passwordField.dispatchEvent(new Event('change', {bubbles: true}));
-                            filled = true;
-                            
-                            if (submitButton) {
-                                setTimeout(() => {
-                                    submitButton.click();
-                                }, 500);
-                                return { success: true, action: 'both_submitted', step: 'login_complete' };
-                            }
-                        }
-                        
-                        return { 
-                            success: filled, 
-                            action: filled ? 'filled' : 'no_fields',
-                            step: 'unknown',
-                            foundUsername: !!usernameField,
-                            foundPassword: !!passwordField,
-                            foundSubmit: !!submitButton
-                        };
-                    },
-                    args: [username, password, state.usernameSelector, state.passwordSelector, state.submitSelector]
-                }).then((results) => {
-                    if (!results || results.length === 0) {
-                        return;
-                    }
-                    const result = results[0].result;
-                    
-                    if (result.success) {
-                        // Provide step-specific status messages
-                        let statusMessage = "Processing login...";
-                        if (result.step === 'username_next') {
-                            statusMessage = "Username submitted, waiting for password step...";
-                        } else if (result.step === 'login_complete') {
-                            statusMessage = "Login submitted, verifying authentication...";
-                        } else if (result.action === 'both_submitted') {
-                            statusMessage = "Credentials submitted, completing login...";
-                        }
-                        
-                        chrome.storage.local.set({"login_status": {"status": "progress", "message": statusMessage}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        
-                        // Continue monitoring for the next step or completion
-                        let waitTime = 3000; // Default wait time
-                        if (result.step === 'username_next') {
-                            waitTime = 2000; // Shorter wait for next step
-                        } else if (result.step === 'login_complete') {
-                            waitTime = 4000; // Longer wait for final authentication
-                        }
-                        
-                        setTimeout(() => {
-                            waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth + 1);
-                        }, waitTime);
-                    } else {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Could not complete login process"}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        chrome.tabs.remove(tabId);
-                    }
-                }).catch(error => {
-                    // Don't fail immediately on connection errors - the tab might be navigating
-                    if (error.message.includes("Could not establish connection") || 
-                        error.message.includes("Receiving end does not exist") ||
-                        error.message.includes("No tab with id")) {
-                        // Continue monitoring instead of failing
-                        setTimeout(() => {
-                            waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, recursionDepth + 1);
-                        }, 2000);
-                    } else {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login injection failed"}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        chrome.tabs.remove(tabId);
-                    }
-                });
-                return;
-            }
-            
-            // Check if page seems fully loaded but no fields found - try different approach
-            if (monitorCount > 15 && state.readyState === 'complete' && state.bodyHTMLLength > 1000 && 
-                !state.hasUsernameField && !state.hasPasswordField && !state.hasSpinners) {
-                
-                // Try navigating directly to login endpoint if we're stuck on OAuth2 page
-                if (state.url.includes('/oauth2/')) {
-                    chrome.storage.local.get(["settings"], function(storage){
-                        if (storage.settings && storage.settings.okta_domain) {
-                            const directLoginUrl = "https://" + storage.settings.okta_domain + "/login/login.htm";
-                            
-                            chrome.tabs.update(tabId, { url: directLoginUrl }, function() {
-                                chrome.storage.local.set({"login_status": {"status": "progress", "message": "Navigating to direct login page..."}});
-                                safeSendMessage({"method": "UpdateLoginStatus"});
-                                
-                                // Reset counter and continue monitoring on new page
-                                setTimeout(() => {
-                                    waitForOAuth2LoginFields(tabId, callback, callback_argument, username, password, 0);
-                                }, 3000);
-                            });
-                            clearInterval(monitor_timer);
-                            return;
-                        }
-                    });
-                }
-            }
-            
-            // Show progress message
-            if (monitorCount % 10 === 0) {
-                chrome.storage.local.set({"login_status": {"status": "progress", "message": `Waiting for login fields... (${Math.floor(monitorCount/10)*5}s)`}});
-                safeSendMessage({"method": "UpdateLoginStatus"});
-            }
-            
-        }).catch((error) => {
-            // Log monitoring errors during tab navigation for debugging
-            debugLog("Monitoring error during tab navigation:", error.message);
-        });
-        }, 500); // Check every 0.5 seconds for faster response
-        
-        // Timeout after 60 seconds (only on first recursion to avoid multiple timeouts)
-        if (recursionDepth === 0) {
-            setTimeout(() => {
-                // Check if login already completed before setting failure status
-                chrome.storage.local.get(["oauth2LoginCompleted"], function(result) {
-                    if (result.oauth2LoginCompleted) {
-                        // Login already completed successfully, don't overwrite status
-                        debugLog("OAuth2 timeout fired but login already completed - ignoring");
-                        return;
-                    }
-                    clearInterval(monitor_timer);
-                    chrome.storage.local.set({"login_status": {"status": "failed", "message": "OAuth2 login fields never appeared"}});
-                    safeSendMessage({"method": "UpdateLoginStatus"});
-                    chrome.tabs.remove(tabId);
-                });
-            }, OAUTH2_TIMEOUT_MS);
-        }
-    }, 2000); // Wait 2 seconds after tab activation
-}
 
 
 function loadOktaApps() {

@@ -32,10 +32,42 @@ body {
 /* Header */
 header {
     display: flex;
-    justify-content: flex-end;
-    padding: 8px 16px;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+}
+
+#nav {
+    display: flex;
+    gap: 4px;
+}
+
+.nav_btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav_btn:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.nav_btn.active {
+    color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.1);
 }
 
 #version-info {
@@ -44,17 +76,18 @@ header {
     font-weight: 500;
 }
 
-/* Settings Section */
-#settings_section {
-    width: 400px;
-    display: inline-flex;
+/* Settings view (toggled by the gear button) */
+#settings_view {
+    display: none;
     flex-direction: column;
-    margin: 0;
-    padding: 0;
-    background: var(--background);
-    gap: 0;
-    box-sizing: border-box;
+    padding: 16px 20px;
+    gap: 8px;
 }
+
+#settings_view.active {
+    display: flex;
+}
+
 
 /* Collapsible Header */
 .collapsible-header {
@@ -72,20 +105,55 @@ header {
     background: var(--surface-hover);
 }
 
-#settings_title {
+.collapsible-title {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
 }
 
-#settings_chevron {
+.collapsible-header .chevron {
     color: var(--text-secondary);
     transition: transform 0.3s ease;
     font-size: 12px;
 }
 
-#settings_section.collapsed #settings_chevron {
+.collapsible-section.collapsed .chevron {
     transform: rotate(-90deg);
+}
+
+.app_tab_actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.app_refresh_btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.app_refresh_btn:hover {
+    background: var(--surface-hover);
+    color: var(--primary-color);
+}
+
+.app_refresh_btn.spinning i {
+    animation: spin 0.8s linear infinite;
+}
+
+.app_refresh_btn:disabled {
+    cursor: default;
 }
 
 /* Collapsible Content */
@@ -94,22 +162,44 @@ header {
     flex-direction: column;
     padding: 16px 20px;
     gap: 8px;
-    overflow: hidden;
-    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 1000px;
     transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
     opacity: 1;
 }
 
-#settings_section.collapsed .collapsible-content {
+.collapsible-section.collapsed > .collapsible-content {
     max-height: 0;
     padding-top: 0;
     padding-bottom: 0;
     opacity: 0;
 }
 
-/* Login Status - Always visible */
+/* Each AWS app is its own collapsible tab, styled like the Settings tab. */
+.app_tab {
+    width: 400px;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    background: var(--background);
+    gap: 0;
+    box-sizing: border-box;
+}
+
+/* App-tab content keeps its own inner padding (header bar + list), so it
+   overrides the Settings content padding/gap. */
+.app_tab_content {
+    position: relative;
+    padding: 0;
+    gap: 0;
+    max-height: 700px;
+}
+
+/* Login Status */
 #login_status_div {
-    padding: 0 20px 12px 20px;
+    padding: 0;
 }
 
 .setting_name {
@@ -124,6 +214,14 @@ header {
     font-size: 11px;
     font-weight: 400;
     color: var(--text-secondary);
+}
+
+.setting_sublabel {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
 }
 
 .setting_edit_toggle {
@@ -245,50 +343,105 @@ div.login_status span.green {
     margin: 0;
 }
 
-/* Accounts Section */
-#accounts_section {
-    position: relative;
+/* Active app selector */
+#app_selector_div {
+    padding: 12px 20px 0 20px;
 }
 
-#header_div {
-    width: 400px;
-    background: var(--background);
-    padding: 16px 20px;
+#app_selector_div .setting_name {
+    margin-bottom: 6px;
+}
+
+#active_app_select {
+    margin-bottom: 0;
+}
+
+/* AWS Apps editor (settings) */
+#aws_apps_list {
     display: flex;
-    gap: 6px;
-    border-bottom: 1px solid var(--border);
-    box-sizing: border-box;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
 }
 
-#header_div button {
-    background: var(--surface);
-    flex: 1;
+.aws_app_item {
     border: 1px solid var(--border);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 500;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
-    margin: 0;
-    transition: all 0.2s ease;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    border-radius: var(--radius);
+    padding: 12px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-#header_div button:hover {
-    background: var(--surface-hover);
+.aws_app_header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.aws_app_header .text_setting_value {
+    flex: 1;
+}
+
+.aws_app_item .text_setting_value {
+    margin-bottom: 0;
+}
+
+.aws_app_item .app_field_label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.app_delete {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.app_delete:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--danger-color);
+}
+
+.secondary_btn {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 12px;
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.15s ease;
+}
+
+.secondary_btn:hover {
     border-color: var(--primary-color);
     color: var(--primary-color);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow);
+    background: var(--surface-hover);
 }
 
-#accounts_div {
+/* Per-app account list (inside each app tab) */
+.app_accounts {
     width: 400px;
     max-height: 400px;
-    min-height: 200px;
+    min-height: 120px;
     overflow-y: auto;
     overflow-x: visible;
     background: var(--background);
@@ -505,8 +658,8 @@ div.login_status span.green {
     font-weight: 500;
 }
 
-/* Loading Overlay */
-#accounts_load {
+/* Loading Overlay (per app tab) */
+.app_load {
     position: absolute;
     top: 0;
     left: 0;
@@ -522,7 +675,7 @@ div.login_status span.green {
     gap: 20px;
 }
 
-#accounts_load span {
+.app_load span {
     color: var(--text-secondary);
     font-weight: 500;
     text-align: center;
@@ -530,16 +683,16 @@ div.login_status span.green {
     letter-spacing: 0.3px;
 }
 
-#accounts_load.error span {
+.app_load.error span {
     color: #dc2626;
     font-weight: 600;
 }
 
-#accounts_load.error .modern-loader {
+.app_load.error .modern-loader {
     display: none;
 }
 
-#accounts_load_dismiss {
+.app_load_dismiss {
     display: none;
     margin-top: 4px;
     padding: 8px 18px;
@@ -553,12 +706,12 @@ div.login_status span.green {
     transition: background 0.15s ease, color 0.15s ease;
 }
 
-#accounts_load_dismiss:hover {
+.app_load_dismiss:hover {
     background: #dc2626;
     color: var(--background);
 }
 
-#accounts_load.error #accounts_load_dismiss {
+.app_load.error .app_load_dismiss {
     display: inline-block;
 }
 

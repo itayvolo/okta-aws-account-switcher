@@ -1,6 +1,8 @@
 window.addEventListener("load", load_popup);
 
-// Helper function to wake up service worker
+// Tracks which app tab a pending accounts_status update belongs to.
+let statusAppId = null;
+
 function wakeUpServiceWorker() {
     return new Promise((resolve) => {
         chrome.storage.local.get(['_keepalive'], () => {
@@ -9,7 +11,6 @@ function wakeUpServiceWorker() {
     });
 }
 
-// Helper function to send messages with error handling
 async function safeSendMessage(message, retries = 3) {
     await wakeUpServiceWorker();
 
@@ -27,50 +28,30 @@ async function safeSendMessage(message, retries = 3) {
     }
 }
 
-// Add keyboard shortcuts
-document.addEventListener('keydown', function(event) {
-    // Ctrl/Cmd + R to refresh accounts
-    if ((event.ctrlKey || event.metaKey) && event.key === 'r') {
-        event.preventDefault();
-        get_all_accounts();
-    }
-    // Escape to close any open menus
-    if (event.key === 'Escape') {
-        closeAllMenus();
-    }
-});
-
-// Close menus when clicking outside
-document.addEventListener('click', function(event) {
-    const isMenuButton = event.target.closest('.menu_drop_btn');
-    const isMenuContent = event.target.closest('.drop_content');
-    const isMenuIcon = event.target.classList.contains('fa-ellipsis-v');
-
-    if (!isMenuButton && !isMenuContent && !isMenuIcon) {
-        closeAllMenus();
-    }
-});
-
-function closeAllMenus() {
-    const dropContents = document.querySelectorAll('.drop_content');
-    dropContents.forEach(drop => {
-        drop.classList.remove('show');
-    });
+function elt(tag, className) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    return e;
 }
 
-function toggleSettings() {
-    const settingsSection = document.getElementById('settings_section');
-    settingsSection.classList.toggle('collapsed');
+function newAppId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return "app-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 }
 
-function collapseSettings() {
-    const settingsSection = document.getElementById('settings_section');
-    settingsSection.classList.add('collapsed');
+function getApps(settings) {
+    return Array.isArray(settings && settings.aws_apps) ? settings.aws_apps : [];
 }
 
-function expandSettings() {
-    const settingsSection = document.getElementById('settings_section');
-    settingsSection.classList.remove('collapsed');
+function appDisplayName(app) {
+    const base = app.label || "AWS";
+    return app.region === "govcloud" ? base + " (GovCloud)" : base;
+}
+
+function toggleCollapse(sectionEl) {
+    sectionEl.classList.toggle('collapsed');
 }
 
 async function load_popup() {
@@ -80,320 +61,278 @@ async function load_popup() {
         // Service worker connection failed
     }
 
-    // Check if we have accounts and collapse settings immediately (without animation)
-    chrome.storage.local.get(["accounts"], function(result) {
-        if (result.accounts && Object.keys(result.accounts).length > 0) {
-            const settingsSection = document.getElementById('settings_section');
-            const collapsibleContent = document.getElementById('settings_content');
-            const chevron = document.getElementById('settings_chevron');
+    if (typeof migrateSettings === "function") {
+        migrateSettings(() => init_popup());
+    } else {
+        init_popup();
+    }
+}
 
-            // Temporarily disable all transitions for instant collapse
-            settingsSection.style.transition = 'none';
-            if (collapsibleContent) collapsibleContent.style.transition = 'none';
-            if (chevron) chevron.style.transition = 'none';
+function showView(view) {
+    const settingsView = document.getElementById("settings_view");
+    const appTabs = document.getElementById("app_tabs");
+    const homeBtn = document.getElementById("nav_home");
+    const settingsBtn = document.getElementById("nav_settings");
 
-            settingsSection.classList.add('collapsed');
+    const settings = view === "settings";
+    settingsView.classList.toggle("active", settings);
+    appTabs.style.display = settings ? "none" : "block";
+    homeBtn.classList.toggle("active", !settings);
+    settingsBtn.classList.toggle("active", settings);
+}
 
-            // Re-enable transitions after a frame
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    settingsSection.style.transition = '';
-                    if (collapsibleContent) collapsibleContent.style.transition = '';
-                    if (chevron) chevron.style.transition = '';
-                });
-            });
-        }
-    });
-
-    // Set up event listeners
-    document.getElementById('get_accounts').addEventListener("click", get_all_accounts);
+function init_popup() {
+    document.getElementById('nav_home').addEventListener("click", () => showView("home"));
+    document.getElementById('nav_settings').addEventListener("click", () => showView("settings"));
     document.getElementById('okta_login').addEventListener("click", okta_login);
-    document.getElementById('settings_header').addEventListener("click", toggleSettings);
 
-    // Set up settings input listeners
     document.getElementById("okta_domain").addEventListener("focusout", save_setting);
-    document.getElementById("okta_username").addEventListener("focusout", save_setting);
-    document.getElementById("okta_password").addEventListener("focusout", save_setting);
-    document.getElementById("aws_app_url").addEventListener("focusout", function(e) {
-        save_aws_app_url(e);
-        e.currentTarget.setAttribute("readonly", "");
-    });
-    document.getElementById("aws_app_url_edit").addEventListener("click", function(e) {
-        e.preventDefault();
-        const input = document.getElementById("aws_app_url");
-        input.removeAttribute("readonly");
-        input.focus();
-        input.select();
-    });
-    document.getElementById("aws_flow_mode").addEventListener("change", save_setting);
-    document.getElementById("accounts_load_dismiss").addEventListener("click", function() {
-        chrome.storage.local.remove("accounts_status", function() {
-            const loadDiv = document.getElementById("accounts_load");
-            loadDiv.classList.remove("error");
-            loadDiv.style.display = "none";
-        });
+
+    document.getElementById("add_aws_app").addEventListener("click", add_aws_app);
+
+    chrome.storage.local.get(["settings", "accounts"], async function(result) {
+        const settings = result.settings || {};
+        const accountsRoot = result.accounts || {};
+
+        if (settings.okta_domain !== undefined) {
+            document.getElementById("okta_domain").value = settings.okta_domain;
+        }
+
+        render_apps_list(settings);
+        render_app_tabs(settings, accountsRoot);
+
+        // Default to Home when apps are configured, otherwise open Settings.
+        showView(getApps(settings).length > 0 ? "home" : "settings");
     });
 
-    // Load saved settings
-    chrome.storage.local.get(["settings"], async function(result) {
-        if (result.settings === undefined) {
-            return;
-        }
-        document.getElementById("aws_flow_mode").value = result.settings.aws_flow_mode || "access_portal";
-        if (result.settings.okta_domain !== undefined) {
-            document.getElementById("okta_domain").value = result.settings.okta_domain;
-        }
-        if (result.settings.okta_username !== undefined) {
-            document.getElementById("okta_username").value = result.settings.okta_username;
-        }
-        // Load and decrypt password if it exists
-        if (result.settings.okta_password !== undefined && result.settings.okta_domain) {
-            if (window.CryptoUtils && window.CryptoUtils.isEncrypted(result.settings.okta_password)) {
-                const decrypted = await window.CryptoUtils.decryptPassword(
-                    result.settings.okta_password,
-                    result.settings.okta_domain
-                );
-                if (decrypted) {
-                    document.getElementById("okta_password").value = decrypted;
-                }
-            } else {
-                // Password is stored in plaintext (legacy)
-                document.getElementById("okta_password").value = result.settings.okta_password;
-            }
-        }
-        // Load AWS app URL if it exists
-        if (result.settings.aws_app !== undefined && result.settings.aws_app.url) {
-            document.getElementById("aws_app_url").value = result.settings.aws_app.url;
-        }
-    });
-
-    load_aws_accounts();
     update_login_status();
 }
 
-function load_aws_accounts() {
-    update_accounts_status();
-    var current_account = "";
-    var current_role = "";
-    chrome.cookies.getAll({"domain": ".amazon.com", "name": "aws-userInfo"}, function(user_info_cookies){
-        if (user_info_cookies.length !== 0) {
-            for (let i = 0; i < user_info_cookies.length; i++) {
-                if (user_info_cookies[i].domain === "amazon.com") {continue;}
-                var userInfo = JSON.parse(decodeURIComponent(user_info_cookies[i].value));
-                current_account = userInfo.alias;
-                current_role = userInfo.arn.split('/')[1];
-                break;
-            }
-        }
-        chrome.storage.local.get(["accounts"], (result) => {
-            if (result.accounts === undefined) {return}
-            const items = result.accounts;
-            if (items.length === 0) {return}
-            var allKeys = Object.keys(items);
+// ---- AWS apps settings editor -----------------------------------------
 
-            for (let i = 0; i < allKeys.length; i++) {
-                var row_div = document.createElement('div');
-                row_div.classList.add("row");
+function render_apps_list(settings) {
+    const container = document.getElementById("aws_apps_list");
+    container.innerHTML = "";
+    const apps = getApps(settings);
 
-                // Create menu button container with dropdown (on the left)
-                var menu_container = document.createElement('div');
-                menu_container.style.position = 'relative';
-                menu_container.style.display = 'flex';
-                menu_container.style.alignItems = 'center';
-                row_div.appendChild(menu_container);
+    apps.forEach(app => {
+        const item = elt("div", "aws_app_item");
+        item.dataset.id = app.id;
 
-                var menu_open_btn = document.createElement('div');
-                menu_open_btn.classList.add("menu_drop_btn");
-                menu_open_btn.addEventListener("click", toggle_menu);
-                menu_container.appendChild(menu_open_btn);
+        const header = elt("div", "aws_app_header");
 
-                var menu_icon = document.createElement('i');
-                menu_icon.classList.add("fas", "fa-ellipsis-v");
-                menu_open_btn.appendChild(menu_icon);
+        const labelInput = elt("input", "text_setting_value app_label_input");
+        labelInput.placeholder = "Label (e.g. Commercial, GovCloud)";
+        labelInput.spellcheck = false;
+        labelInput.value = app.label || "";
+        labelInput.addEventListener("focusout", () => save_app_field(app.id, "label", labelInput.value));
+        header.appendChild(labelInput);
 
-                var account_div = document.createElement('div');
-                account_div.classList.add("account");
-                account_div.id = allKeys[i];
-                account_div.addEventListener("click", account_change);
-                row_div.appendChild(account_div);
+        const del = elt("button", "app_delete");
+        del.type = "button";
+        del.title = "Remove this AWS app";
+        del.setAttribute("aria-label", "Remove this AWS app");
+        del.appendChild(elt("i", "fas fa-times"));
+        del.addEventListener("click", () => delete_aws_app(app.id));
+        header.appendChild(del);
 
-                var account_name_role_div = document.createElement('div');
-                account_name_role_div.id = "account_name_role";
-                account_div.appendChild(account_name_role_div);
+        item.appendChild(header);
 
-                var account_name_div = document.createElement('div');
-                account_name_div.innerText = allKeys[i].split('/')[0];
-                account_name_div.id = "account_name";
-                account_name_role_div.appendChild(account_name_div);
+        const urlInput = elt("input", "text_setting_value");
+        urlInput.placeholder = "https://company.okta.com/home/amazon_aws/...";
+        urlInput.spellcheck = false;
+        urlInput.value = app.url || "";
+        urlInput.addEventListener("focusout", () => save_app_field(app.id, "url", urlInput.value));
+        item.appendChild(urlInput);
 
-                var account_role_div = document.createElement('div');
-                account_role_div.id = "account_role";
-                account_role_div.innerText = allKeys[i].split('/')[1];
-                account_name_role_div.appendChild(account_role_div);
+        container.appendChild(item);
+    });
+}
 
-                var info_div = document.createElement('div');
-                info_div.id = "status_div";
-                account_div.appendChild(info_div);
-
-                var status = items[allKeys[i]].status;
-                var status_div = document.createElement('div');
-                status_div.id = "status";
-                status_div.innerText = status;
-                info_div.appendChild(status_div);
-
-                var account_id_div = document.createElement('div');
-                account_id_div.classList.add("status");
-                account_id_div.innerText = items[allKeys[i]].id;
-                info_div.appendChild(account_id_div);
-
-                // Create dropdown menu
-                var drop_content = document.createElement('div');
-                drop_content.classList.add("drop_content");
-                menu_container.appendChild(drop_content);
-
-                var menu_options = document.createElement('div');
-                menu_options.classList.add("menu_options");
-                drop_content.appendChild(menu_options);
-
-                // Delete option
-                var delete_menu_option = document.createElement('div');
-                delete_menu_option.classList.add("menu_option", "delete-option");
-                delete_menu_option.addEventListener("click", delete_account);
-                menu_options.appendChild(delete_menu_option);
-
-                var delete_menu_icon = document.createElement('i');
-                delete_menu_icon.classList.add("fa", "fa-trash-alt");
-                delete_menu_option.appendChild(delete_menu_icon);
-
-                var delete_menu_text = document.createElement('span');
-                delete_menu_text.classList.add("option_text");
-                delete_menu_text.innerText = "Delete";
-                delete_menu_option.appendChild(delete_menu_text);
-
-                // Expire option (only for ready accounts)
-                if (status === "ready") {
-                    status_div.classList.add("green");
-                    var expire_menu_option = document.createElement('div');
-                    expire_menu_option.classList.add("menu_option", "expire-option");
-                    expire_menu_option.addEventListener("click", expire_account);
-                    menu_options.appendChild(expire_menu_option);
-
-                    var expire_menu_icon = document.createElement('i');
-                    expire_menu_icon.classList.add("fa", "fa-clock");
-                    expire_menu_option.appendChild(expire_menu_icon);
-
-                    var expire_menu_text = document.createElement('span');
-                    expire_menu_text.classList.add("option_text");
-                    expire_menu_text.innerText = "Expire";
-                    expire_menu_option.appendChild(expire_menu_text);
-                } else {
-                    status_div.classList.add("red");
-                }
-
-                document.getElementById('accounts_div').appendChild(row_div);
-            }
+function save_app_field(id, field, value) {
+    chrome.storage.local.get(["settings"], function(result) {
+        const settings = result.settings || {};
+        if (!Array.isArray(settings.aws_apps)) settings.aws_apps = [];
+        const app = settings.aws_apps.find(a => a.id === id);
+        if (!app) return;
+        app[field] = value;
+        chrome.storage.local.set({ settings: settings }, function() {
+            if (field === "label") refresh_tabs();
         });
     });
 }
 
-function account_change(e) {
-    if (e.target.closest('.menu_drop_btn') || e.target.closest('.drop_content')) {
-        return;
-    }
-
-    var target = e.currentTarget;
-    var account = target.id;
-
-    if (!account) {
-        return;
-    }
-
-    safeSendMessage({"method": "changeAccount", "account": account})
-        .catch((error) => {
-            alert('Failed to switch account. Please try again.');
+function add_aws_app() {
+    chrome.storage.local.get(["settings"], function(result) {
+        const settings = result.settings || {};
+        if (!Array.isArray(settings.aws_apps)) settings.aws_apps = [];
+        const id = newAppId();
+        settings.aws_apps.push({ id: id, label: "AWS", url: "", flow_mode: "access_portal", region: "commercial" });
+        if (!settings.active_aws_app_id) settings.active_aws_app_id = id;
+        chrome.storage.local.set({ settings: settings }, function() {
+            render_apps_list(settings);
+            refresh_tabs();
         });
+    });
 }
 
-function toggle_menu(e) {
-    e.stopPropagation();
-    var target = e.currentTarget;
-    var drop_div = target.parentElement.querySelector(".drop_content");
-
-    // Close all other menus first
-    const allDropdowns = document.querySelectorAll('.drop_content');
-    allDropdowns.forEach(dropdown => {
-        if (dropdown !== drop_div) {
-            dropdown.classList.remove('show');
+function delete_aws_app(id) {
+    if (!confirm("Delete this AWS app and all of its saved accounts?")) return;
+    chrome.storage.local.get(["settings", "accounts"], function(result) {
+        const settings = result.settings || {};
+        settings.aws_apps = getApps(settings).filter(a => a.id !== id);
+        if (settings.active_aws_app_id === id) {
+            settings.active_aws_app_id = (settings.aws_apps[0] || {}).id || null;
         }
+        const accounts = result.accounts || {};
+        delete accounts[id];
+        chrome.storage.local.set({ settings: settings, accounts: accounts }, function() {
+            render_apps_list(settings);
+            render_app_tabs(settings, accounts);
+        });
     });
+}
 
-    // Toggle the clicked menu
-    if (drop_div) {
-        const isShowing = drop_div.classList.contains('show');
-        if (isShowing) {
-            drop_div.classList.remove('show');
-        } else {
-            // Use position: fixed so the dropdown escapes the scrollable
-            // accounts container and can extend below its visible area.
-            const buttonRect = target.getBoundingClientRect();
-            drop_div.style.position = 'fixed';
-            drop_div.style.top = (buttonRect.bottom + 4) + 'px';
-            drop_div.style.left = buttonRect.left + 'px';
-            drop_div.style.right = 'auto';
-            drop_div.style.bottom = 'auto';
-            drop_div.classList.add('show');
-        }
+// ---- Per-app account tabs ---------------------------------------------
+
+function refresh_tabs() {
+    chrome.storage.local.get(["settings", "accounts"], function(result) {
+        render_app_tabs(result.settings || {}, result.accounts || {});
+    });
+}
+
+function render_app_tabs(settings, accountsRoot) {
+    const container = document.getElementById("app_tabs");
+    container.innerHTML = "";
+    getApps(settings).forEach(app => {
+        const items = (accountsRoot && accountsRoot[app.id]) || {};
+        container.appendChild(build_app_tab(app, items));
+    });
+}
+
+function build_app_tab(app, items) {
+    const section = elt("div", "collapsible-section app_tab");
+    section.dataset.id = app.id;
+
+    const header = elt("div", "collapsible-header");
+    const title = elt("span", "collapsible-title");
+    title.innerText = appDisplayName(app);
+    header.appendChild(title);
+
+    const actions = elt("div", "app_tab_actions");
+    const refreshBtn = elt("button", "app_refresh_btn");
+    refreshBtn.type = "button";
+    refreshBtn.title = "Refresh accounts";
+    refreshBtn.setAttribute("aria-label", "Refresh accounts");
+    refreshBtn.appendChild(elt("i", "fas fa-sync-alt"));
+    refreshBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        trigger_get_accounts(app.id, refreshBtn);
+    });
+    actions.appendChild(refreshBtn);
+    actions.appendChild(elt("i", "fas fa-chevron-down chevron"));
+    header.appendChild(actions);
+
+    header.addEventListener("click", () => toggleCollapse(section));
+    section.appendChild(header);
+
+    const content = elt("div", "collapsible-content app_tab_content");
+
+    const load = elt("div", "app_load");
+    const loader = elt("div", "modern-loader");
+    loader.appendChild(elt("div", "loader-ring"));
+    load.appendChild(loader);
+    load.appendChild(elt("span", "app_load_span"));
+    const dismiss = elt("button", "app_load_dismiss");
+    dismiss.type = "button";
+    dismiss.innerText = "Dismiss";
+    dismiss.addEventListener("click", function() {
+        chrome.storage.local.remove("accounts_status", function() {
+            load.classList.remove("error");
+            load.style.display = "none";
+        });
+    });
+    load.appendChild(dismiss);
+    content.appendChild(load);
+
+    const list = elt("div", "app_accounts");
+    content.appendChild(list);
+    render_app_accounts(list, items, app);
+
+    section.appendChild(content);
+    return section;
+}
+
+function render_app_accounts(listEl, items, app) {
+    listEl.innerHTML = "";
+    const allKeys = Object.keys(items);
+
+    for (let i = 0; i < allKeys.length; i++) {
+        const row_div = elt('div', 'row');
+
+        const account_div = elt('div', 'account');
+        account_div.id = allKeys[i];
+        account_div.dataset.appId = app.id;
+        account_div.addEventListener("click", account_change);
+        row_div.appendChild(account_div);
+
+        const account_name_role_div = document.createElement('div');
+        account_name_role_div.id = "account_name_role";
+        account_div.appendChild(account_name_role_div);
+
+        const account_name_div = document.createElement('div');
+        account_name_div.innerText = allKeys[i].split('/')[0];
+        account_name_div.id = "account_name";
+        account_name_role_div.appendChild(account_name_div);
+
+        const account_role_div = document.createElement('div');
+        account_role_div.id = "account_role";
+        account_role_div.innerText = allKeys[i].split('/')[1];
+        account_name_role_div.appendChild(account_role_div);
+
+        const info_div = document.createElement('div');
+        info_div.id = "status_div";
+        account_div.appendChild(info_div);
+
+        const status = items[allKeys[i]].status;
+        const status_div = document.createElement('div');
+        status_div.id = "status";
+        status_div.innerText = status;
+        status_div.classList.add(status === "ready" ? "green" : "red");
+        info_div.appendChild(status_div);
+
+        const account_id_div = elt('div', 'status');
+        account_id_div.innerText = items[allKeys[i]].id;
+        info_div.appendChild(account_id_div);
+
+        listEl.appendChild(row_div);
     }
 }
 
-function get_all_accounts() {
-    const button = document.getElementById('get_accounts');
-    const originalText = button.innerText;
-    button.innerText = 'Loading...';
-    button.disabled = true;
-    button.classList.add('loading-state');
+function trigger_get_accounts(appId, btn) {
+    statusAppId = appId;
+    btn.classList.add('spinning');
+    btn.disabled = true;
 
-    safeSendMessage({"method": "getAllAccounts"});
+    safeSendMessage({ "method": "getAllAccounts", "appId": appId });
 
     setTimeout(() => {
-        button.innerText = originalText;
-        button.disabled = false;
-        button.classList.remove('loading-state');
+        btn.classList.remove('spinning');
+        btn.disabled = false;
     }, 10000);
 }
 
-function expire_account(e) {
-    e.stopPropagation();
-    closeAllMenus();
-    var account_name = e.currentTarget.closest(".row").querySelector("#account_name").innerText;
-    var account_role = e.currentTarget.closest(".row").querySelector("#account_role").innerText;
-    var account = account_name + '/' + account_role;
+function account_change(e) {
+    const target = e.currentTarget;
+    const account = target.id;
+    const appId = target.dataset.appId;
+    if (!account) return;
 
-    if (confirm(`Are you sure you want to expire and log out of account "${account_name}"?`)) {
-        safeSendMessage({"method": "expireAccount", "account": account})
-            .then(() => {
-                location.reload();
-            })
-            .catch((error) => {
-                alert('Failed to expire account. Please try again.');
-            });
-    }
-}
-
-function delete_account(e) {
-    e.stopPropagation();
-    closeAllMenus();
-    var account_name = e.currentTarget.closest(".row").querySelector("#account_name").innerText;
-    var account_role = e.currentTarget.closest(".row").querySelector("#account_role").innerText;
-    var account = account_name + '/' + account_role;
-    if (confirm(`Are you sure you want to delete account "${account_name}" with role "${account_role}"?`)) {
-        chrome.storage.local.get(["accounts"], function(result) {
-            if (result.accounts === undefined) {return}
-            if (result.accounts[account] === undefined) {return}
-            delete result.accounts[account];
-            chrome.storage.local.set(result, function(){location.reload()});
+    statusAppId = appId;
+    safeSendMessage({ "method": "changeAccount", "account": account, "appId": appId })
+        .catch(() => {
+            alert('Failed to switch account. Please try again.');
         });
-    }
 }
 
 chrome.runtime.onMessage.addListener(function(request, _sender, _sendResponse) {
@@ -409,43 +348,15 @@ chrome.runtime.onMessage.addListener(function(request, _sender, _sendResponse) {
 });
 
 async function save_setting(e) {
-    var target = e.currentTarget;
+    const target = e.currentTarget;
     chrome.storage.local.get(["settings"], async function(result) {
         if (result.settings === undefined) {
             result.settings = {};
         }
         if (target.value !== "") {
-            // Always encrypt password
-            if (target.id === 'okta_password' && window.CryptoUtils && result.settings.okta_domain) {
-                const encrypted = await window.CryptoUtils.encryptPassword(target.value, result.settings.okta_domain);
-                if (encrypted) {
-                    result.settings[target.id] = encrypted;
-                } else {
-                    result.settings[target.id] = target.value;
-                }
-            } else {
-                result.settings[target.id] = target.value;
-            }
+            result.settings[target.id] = target.value;
         } else {
             delete result.settings[target.id];
-        }
-        chrome.storage.local.set(result);
-    });
-}
-
-function save_aws_app_url(e) {
-    var url = e.currentTarget.value;
-    chrome.storage.local.get(["settings"], function(result) {
-        if (result.settings === undefined) {
-            result.settings = {};
-        }
-        if (url !== "") {
-            result.settings.aws_app = {
-                label: "AWS",
-                url: url
-            };
-        } else {
-            delete result.settings.aws_app;
         }
         chrome.storage.local.set(result);
     });
@@ -457,7 +368,6 @@ function okta_login() {
     const login_button = document.querySelector("button#okta_login");
     const login_button_span = login_button.querySelector("span");
 
-    // Set loading state
     status_div.style.display = "block";
     status_span.innerText = "Starting login...";
     status_span.className = "";
@@ -471,10 +381,10 @@ function okta_login() {
 function update_login_status() {
     chrome.storage.local.get(["login_status"], function(storage) {
         if (storage.login_status === undefined) {return}
-        var status_div = document.getElementById("login_status_div");
-        var status_span = document.getElementById("login_status");
-        var login_button = document.querySelector("button#okta_login");
-        var login_button_span = login_button.querySelector("span");
+        const status_div = document.getElementById("login_status_div");
+        const status_span = document.getElementById("login_status");
+        const login_button = document.querySelector("button#okta_login");
+        const login_button_span = login_button.querySelector("span");
 
         status_div.style.display = "block";
         status_span.innerText = storage.login_status.message;
@@ -507,45 +417,42 @@ function update_login_status() {
 
 function update_accounts_status() {
     chrome.storage.local.get(["accounts_status"], function(storage) {
-        if (storage.accounts_status === undefined) {return}
+        if (storage.accounts_status === undefined || !statusAppId) {return}
 
-        const button = document.getElementById('get_accounts');
-        const loadDiv = document.getElementById("accounts_load");
-        document.getElementById("accounts_load_span").innerText = storage.accounts_status.message;
+        const section = document.querySelector('.app_tab[data-id="' + statusAppId + '"]');
+        if (!section) return;
+
+        const loadDiv = section.querySelector(".app_load");
+        const span = section.querySelector(".app_load_span");
+        const button = section.querySelector(".app_refresh_btn");
+        if (span) span.innerText = storage.accounts_status.message;
+
+        const resetButton = () => {
+            if (button) {
+                button.classList.remove('spinning');
+                button.disabled = false;
+            }
+        };
 
         if (storage.accounts_status.status === "success") {
             loadDiv.style.display = "none";
             loadDiv.classList.remove("error");
-            if (button) {
-                button.classList.remove('loading-state');
-                button.disabled = false;
-                button.innerText = "Get Accounts";
-            }
+            resetButton();
         }
         else if (storage.accounts_status.status === "failed") {
             loadDiv.style.display = "flex";
             loadDiv.classList.add("error");
-            if (button) {
-                button.classList.remove('loading-state');
-                button.disabled = false;
-                button.innerText = "Get Accounts";
-            }
+            resetButton();
         }
         else if (storage.accounts_status.status === "progress") {
             loadDiv.style.display = "flex";
             loadDiv.classList.remove("error");
-            if (button) {
-                button.classList.add('loading-state');
-            }
+            if (button) { button.classList.add('spinning'); button.disabled = true; }
         }
         else {
             loadDiv.style.display = "none";
             loadDiv.classList.remove("error");
-            if (button) {
-                button.classList.remove('loading-state');
-                button.disabled = false;
-                button.innerText = "Get Accounts";
-            }
+            resetButton();
         }
     });
 }

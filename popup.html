@@ -5,62 +5,36 @@
     <link rel="stylesheet" type="text/css" href="popup.css">
   </head>
   <body>
-    <script src="crypto-utils.js"></script>
+    <script src="endpoints.js"></script>
     <script src="popup.js"></script>
 
-    <!-- Header -->
+    <!-- Header: nav buttons (left) + version (right) -->
     <header>
-      <div id="version-info">v5.2.0</div>
+      <div id="nav">
+        <button id="nav_home" class="nav_btn" type="button" title="Accounts" aria-label="Accounts"><i class="fas fa-home"></i></button>
+        <button id="nav_settings" class="nav_btn" type="button" title="Settings" aria-label="Settings"><i class="fas fa-cog"></i></button>
+      </div>
+      <div id="version-info">v5.4.0</div>
     </header>
 
-    <!-- Settings Section (Collapsible) -->
-    <div id="settings_section">
-      <div id="settings_header" class="collapsible-header">
-        <span id="settings_title">Settings</span>
-        <i id="settings_chevron" class="fas fa-chevron-down"></i>
-      </div>
-      <div id="settings_content" class="collapsible-content">
-        <span class="setting_name">AWS Login Flow</span>
-        <select class="text_setting_value" id="aws_flow_mode">
-          <option value="access_portal">AWS Access Portal (awsapps.com)</option>
-          <option value="classic_saml">Classic SAML (signin.aws.amazon.com)</option>
-        </select>
-        <span class="setting_name">OKTA Domain</span>
-        <input spellcheck="false" class="text_setting_value" id="okta_domain" placeholder="company.okta.com"/>
-        <span class="setting_name">OKTA Username</span>
-        <input spellcheck="false" class="text_setting_value" id="okta_username" placeholder="username"/>
-        <span class="setting_name">OKTA Password</span>
-        <input type="password" class="text_setting_value" id="okta_password" placeholder="password"/>
-        <span class="setting_name">AWS App URL <span class="setting_hint">(auto-detected)</span> <a href="#" class="setting_edit_toggle" id="aws_app_url_edit">edit</a></span>
-        <input spellcheck="false" class="text_setting_value" id="aws_app_url" placeholder="https://company.okta.com/home/amazon_aws/..." readonly/>
-        <div class="login">
-          <button id="okta_login">
-            <span>Login</span>
-          </button>
-        </div>
+    <!-- Settings View -->
+    <div id="settings_view">
+      <span class="setting_name">OKTA Domain</span>
+      <input spellcheck="false" class="text_setting_value" id="okta_domain" placeholder="company.okta.com"/>
+      <span class="setting_name">AWS Apps <span class="setting_hint">(auto-detected on login)</span></span>
+      <div id="aws_apps_list"></div>
+      <button id="add_aws_app" type="button" class="secondary_btn">+ Add AWS App</button>
+      <div class="login">
+        <button id="okta_login">
+          <span>Login</span>
+        </button>
       </div>
       <div class="login_status" id="login_status_div">
         <span id="login_status"></span>
       </div>
     </div>
 
-    <!-- Divider -->
-    <hr class="section-divider">
-
-    <!-- Accounts Section -->
-    <div id="accounts_section">
-      <div id="header_div">
-        <button id="get_accounts">Get Accounts</button>
-      </div>
-      <div id="accounts_load">
-        <div class="modern-loader">
-          <div class="loader-ring"></div>
-        </div>
-        <span id="accounts_load_span"></span>
-        <button id="accounts_load_dismiss" type="button">Dismiss</button>
-      </div>
-      <div id="accounts_div">
-      </div>
-    </div>
+    <!-- Home View: one collapsible tab per configured AWS app (injected by popup.js) -->
+    <div id="app_tabs"></div>
   </body>
 </html>
