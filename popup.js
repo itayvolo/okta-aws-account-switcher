@@ -87,6 +87,7 @@ function init_popup() {
     document.getElementById('okta_login').addEventListener("click", okta_login);
 
     document.getElementById("okta_domain").addEventListener("focusout", save_setting);
+    document.getElementById("open_tab_on_switch").addEventListener("change", save_open_tab_pref);
 
     document.getElementById("add_aws_app").addEventListener("click", add_aws_app);
 
@@ -97,6 +98,8 @@ function init_popup() {
         if (settings.okta_domain !== undefined) {
             document.getElementById("okta_domain").value = settings.okta_domain;
         }
+
+        document.getElementById("open_tab_on_switch").checked = settings.open_tab_on_switch !== false;
 
         render_apps_list(settings);
         render_app_tabs(settings, accountsRoot);
@@ -220,6 +223,29 @@ function build_app_tab(app, items) {
     header.appendChild(title);
 
     const actions = elt("div", "app_tab_actions");
+
+    const loginAllBtn = elt("button", "app_login_all_btn");
+    loginAllBtn.type = "button";
+    loginAllBtn.title = "Log in to all accounts";
+    loginAllBtn.setAttribute("aria-label", "Log in to all accounts");
+    loginAllBtn.appendChild(elt("i", "fas fa-bolt"));
+    loginAllBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        trigger_login_all(app.id, loginAllBtn);
+    });
+    actions.appendChild(loginAllBtn);
+
+    const logoutAllBtn = elt("button", "app_logout_all_btn");
+    logoutAllBtn.type = "button";
+    logoutAllBtn.title = "Log out of all accounts";
+    logoutAllBtn.setAttribute("aria-label", "Log out of all accounts");
+    logoutAllBtn.appendChild(elt("i", "fas fa-right-from-bracket"));
+    logoutAllBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        trigger_logout_all(app.id, logoutAllBtn);
+    });
+    actions.appendChild(logoutAllBtn);
+
     const refreshBtn = elt("button", "app_refresh_btn");
     refreshBtn.type = "button";
     refreshBtn.title = "Refresh accounts";
@@ -305,6 +331,18 @@ function render_app_accounts(listEl, items, app) {
         account_id_div.innerText = items[allKeys[i]].id;
         info_div.appendChild(account_id_div);
 
+        if (status === "ready") {
+            const logoutBtn = elt("button", "account_logout_btn");
+            logoutBtn.type = "button";
+            logoutBtn.title = "Log out of this account";
+            logoutBtn.setAttribute("aria-label", "Log out of this account");
+            logoutBtn.dataset.account = allKeys[i];
+            logoutBtn.dataset.appId = app.id;
+            logoutBtn.appendChild(elt("i", "fas fa-right-from-bracket"));
+            logoutBtn.addEventListener("click", logout_account);
+            row_div.appendChild(logoutBtn);
+        }
+
         listEl.appendChild(row_div);
     }
 }
@@ -320,6 +358,30 @@ function trigger_get_accounts(appId, btn) {
         btn.classList.remove('spinning');
         btn.disabled = false;
     }, 10000);
+}
+
+function trigger_login_all(appId, btn) {
+    statusAppId = appId;
+    btn.classList.add('spinning');
+    btn.disabled = true;
+    safeSendMessage({ "method": "loginAllAccounts", "appId": appId });
+}
+
+function trigger_logout_all(appId, btn) {
+    statusAppId = appId;
+    btn.disabled = true;
+    safeSendMessage({ "method": "logoutAllAccounts", "appId": appId });
+}
+
+function logout_account(e) {
+    e.stopPropagation();
+    const target = e.currentTarget;
+    const account = target.dataset.account;
+    const appId = target.dataset.appId;
+    if (!account) return;
+    target.disabled = true;
+    statusAppId = appId;
+    safeSendMessage({ "method": "expireAccount", "account": account, "appId": appId });
 }
 
 function account_change(e) {
@@ -359,6 +421,15 @@ async function save_setting(e) {
             delete result.settings[target.id];
         }
         chrome.storage.local.set(result);
+    });
+}
+
+function save_open_tab_pref(e) {
+    const enabled = e.currentTarget.checked;
+    chrome.storage.local.get(["settings"], function(result) {
+        const settings = result.settings || {};
+        settings.open_tab_on_switch = enabled;
+        chrome.storage.local.set({ settings: settings });
     });
 }
 
@@ -424,14 +495,14 @@ function update_accounts_status() {
 
         const loadDiv = section.querySelector(".app_load");
         const span = section.querySelector(".app_load_span");
-        const button = section.querySelector(".app_refresh_btn");
+        const buttons = section.querySelectorAll(".app_refresh_btn, .app_login_all_btn, .app_logout_all_btn");
         if (span) span.innerText = storage.accounts_status.message;
 
         const resetButton = () => {
-            if (button) {
-                button.classList.remove('spinning');
-                button.disabled = false;
-            }
+            buttons.forEach(b => {
+                b.classList.remove('spinning');
+                b.disabled = false;
+            });
         };
 
         if (storage.accounts_status.status === "success") {
@@ -447,7 +518,7 @@ function update_accounts_status() {
         else if (storage.accounts_status.status === "progress") {
             loadDiv.style.display = "flex";
             loadDiv.classList.remove("error");
-            if (button) { button.classList.add('spinning'); button.disabled = true; }
+            buttons.forEach(b => { b.classList.add('spinning'); b.disabled = true; });
         }
         else {
             loadDiv.style.display = "none";

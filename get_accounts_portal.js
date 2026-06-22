@@ -16,9 +16,14 @@
       while (next && next.getAttribute('aria-level') === '2') {
         const roleLink = next.querySelector('a[data-testid="federation-link"]');
         if (roleLink) {
+          // The role's federation link is the source of truth for the
+          // account id (the per-row id text can be mis-associated). Fall
+          // back to the row's id only if the href has no account_id.
+          const href = roleLink.getAttribute('href') || '';
+          const m = href.match(/account_id=([0-9]+)/);
           out.push({
             accountName,
-            accountId,
+            accountId: m ? m[1] : accountId,
             roleName: roleLink.textContent.trim(),
           });
         }

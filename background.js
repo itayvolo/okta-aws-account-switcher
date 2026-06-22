@@ -469,6 +469,8 @@ function get_all_accounts(preferredId) {
                         } else {
                             if (appAccounts[a.account_name] === undefined) {
                                 appAccounts[a.account_name] = {"id": a.account_id, "status": "expired"};
+                            } else {
+                                appAccounts[a.account_name].id = a.account_id;
                             }
                         }
                     });
@@ -514,21 +516,28 @@ function change_account(app, preset, account){
 
 function refresh_all_aws_tabs(preset) {
     preset = preset || REGION_PRESETS.commercial;
-    chrome.tabs.query({"url": "*://*." + preset.consoleHost + "/*"}, tabs => {
-        if (tabs.length > 0) {
-            for (let i = 0; i < tabs.length; i++) {
-                chrome.tabs.reload(tabs[i].id);
-            }
-        } else {
-            chrome.tabs.create({"url": preset.consoleCreateUrl});
-        }
-        chrome.storage.local.set({"accounts_status": {"status": "success", "message": "🎉 Account changed successfully!"}})
-        safeSendMessage({"method": "UpdateAccountsStatus"});
-        chrome.tabs.query({ active: true, currentWindow: true }, active_tabs => {
-            if (active_tabs[0] != undefined) {
-                if (!active_tabs[0].url.includes(preset.consoleHost)) {
-                    chrome.tabs.update(tabs[0].id, {selected: true});
+    chrome.storage.local.get(["settings"], function(s) {
+        // Default ON: open a fresh console tab when none is open. When OFF we
+        // only reload an already-open console tab and never pop a new one.
+        const openNewTab = !(s.settings && s.settings.open_tab_on_switch === false);
+        chrome.tabs.query({"url": "*://*." + preset.consoleHost + "/*"}, tabs => {
+            if (tabs.length > 0) {
+                for (let i = 0; i < tabs.length; i++) {
+                    chrome.tabs.reload(tabs[i].id);
                 }
+            } else if (openNewTab) {
+                chrome.tabs.create({"url": preset.consoleCreateUrl});
+            }
+            chrome.storage.local.set({"accounts_status": {"status": "success", "message": "🎉 Account changed successfully!"}})
+            safeSendMessage({"method": "UpdateAccountsStatus"});
+            if (tabs.length > 0) {
+                chrome.tabs.query({ active: true, currentWindow: true }, active_tabs => {
+                    if (active_tabs[0] != undefined) {
+                        if (!active_tabs[0].url.includes(preset.consoleHost)) {
+                            chrome.tabs.update(tabs[0].id, {selected: true});
+                        }
+                    }
+                });
             }
         });
     });
@@ -703,7 +712,7 @@ function save(login, callback, originalAccountKey, appId, preset){
     });
 }
 
-function login(app, preset, account, callback) {
+function login(app, preset, account, callback, alwaysCloseTab) {
     debugLog('login called for account:', account);
     chrome.storage.local.get(["accounts"], function(storage){
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
@@ -756,7 +765,16 @@ function login(app, preset, account, callback) {
                                 const finalPreset = updatedPreset || preset;
                                 setTimeout(() => {
                                     save(true, function(){
-                                        callback();
+                                        // The federation tab was opened only to capture
+                                        // cookies. When "open new tab" is off, close it so
+                                        // switching an expired account leaves no new tab.
+                                        chrome.storage.local.get(["settings"], function(s) {
+                                            const keepTab = alwaysCloseTab ? false : !(s.settings && s.settings.open_tab_on_switch === false);
+                                            if (!keepTab) {
+                                                chrome.tabs.remove(tab_id, function(){ checkLastError('close federation tab'); });
+                                            }
+                                            callback();
+                                        });
                                     }, account, app.id, finalPreset);
                                 }, 2000);
                             });
@@ -775,11 +793,11 @@ function login(app, preset, account, callback) {
                 // The SPA intercepts the click and calls window.open(<federation-url>, '_blank'),
                 // so we run in the page's main world and override window.open to navigate
                 // in-place — that way wait_console keeps tracking the same tab.
-                debugLog('Access Portal mode, clicking role link for', account_id, account_role);
+                debugLog('Access Portal mode, clicking role link for', account_name, account_role);
                 chrome.scripting.executeScript({
                     target: {tabId: tab_id},
                     world: 'MAIN',
-                    func: async (account_id, account_role) => {
+                    func: async (account_name, account_role) => {
                         const sleep = ms => new Promise(r => setTimeout(r, ms));
 
                         // Override window.open so the SPA's window.open(url, '_blank') navigates this tab.
@@ -790,35 +808,26 @@ function login(app, preset, account, callback) {
                             return null;
                         };
 
-                        // Locate the account row by its visible account-id text.
-                        const accountRows = document.querySelectorAll('tr[aria-level="1"]');
-                        let targetRow = null;
-                        for (const row of accountRows) {
-                            const idEl = row.querySelector('[data-testid="account-federation-link"]');
-                            if (idEl && idEl.textContent.trim() === account_id) {
-                                targetRow = row;
-                                break;
-                            }
-                        }
-                        if (!targetRow) {
-                            return { ok: false, error: 'account row not found for id ' + account_id };
-                        }
+                        // Expand every collapsed account row so the target role's
+                        // federation link is in the DOM.
+                        const toggles = document.querySelectorAll('tr[aria-level="1"] button[aria-expanded="false"]');
+                        toggles.forEach(t => t.click());
 
-                        // Expand the account if collapsed so the role link exists in the DOM.
-                        const toggle = targetRow.querySelector('button[aria-expanded]');
-                        if (toggle && toggle.getAttribute('aria-expanded') === 'false') {
-                            toggle.scrollIntoView({ block: 'center' });
-                            toggle.click();
-                        }
-
-                        // Poll for the federation link to appear (the SPA may lazy-fetch
-                        // role rows after expansion).
+                        // Locate the link exactly the way the account list was built
+                        // (get_accounts_portal.js): find the level-1 account row by its
+                        // visible name, then walk its level-2 sibling rows for the role
+                        // link whose text matches. This is independent of the account id,
+                        // so it can't collide when rows share or mis-report ids.
                         const findLink = () => {
-                            const links = document.querySelectorAll('a[data-testid="federation-link"]');
-                            for (const link of links) {
-                                const href = link.getAttribute('href') || '';
-                                if (href.includes('account_id=' + account_id) && href.includes('role_name=' + account_role)) {
-                                    return link;
+                            const rows = document.querySelectorAll('tr[aria-level="1"]');
+                            for (const row of rows) {
+                                const nameEl = row.querySelector('[data-testid="account-list-cell"]');
+                                if (!nameEl || nameEl.textContent.trim() !== account_name) continue;
+                                let next = row.nextElementSibling;
+                                while (next && next.getAttribute('aria-level') === '2') {
+                                    const link = next.querySelector('a[data-testid="federation-link"]');
+                                    if (link && link.textContent.trim() === account_role) return link;
+                                    next = next.nextElementSibling;
                                 }
                             }
                             return null;
@@ -831,7 +840,7 @@ function login(app, preset, account, callback) {
                         }
 
                         if (!targetLink) {
-                            return { ok: false, error: 'role link not found for ' + account_id + '/' + account_role };
+                            return { ok: false, error: 'role link not found for ' + account_name + '/' + account_role };
                         }
 
                         targetLink.removeAttribute('target');
@@ -839,7 +848,7 @@ function login(app, preset, account, callback) {
                         targetLink.click();
                         return { ok: true };
                     },
-                    args: [account_id, account_role]
+                    args: [account_name, account_role]
                 }).then((results) => {
                     const r = results[0].result;
                     if (!r || !r.ok) {
@@ -1096,6 +1105,66 @@ function checkExpire(){
     });
 }
 
+function login_all_accounts(appId) {
+    getActiveApp(function(app, preset) {
+        chrome.storage.local.get(["accounts"], function(result) {
+            const appAccounts = (result.accounts && result.accounts[app.id]) || {};
+            const expiredKeys = Object.keys(appAccounts).filter(k => appAccounts[k].status === "expired");
+            const total = expiredKeys.length;
+            if (total === 0) {
+                chrome.storage.local.set({"accounts_status": {"status": "success", "message": "All accounts are already logged in."}});
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                return;
+            }
+            // Federate one account at a time: they share a cookie domain, so a
+            // parallel login would clobber the previous account's cookies before
+            // save() captures them. alwaysCloseTab=true keeps tabs from piling up.
+            let i = 0;
+            const next = function() {
+                if (i >= total) {
+                    chrome.storage.local.set({"accounts_status": {"status": "success", "message": "🎉 Logged in to " + total + " account" + (total === 1 ? "" : "s") + "."}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    safeSendMessage({"method": "UpdatePopup"});
+                    return;
+                }
+                const key = expiredKeys[i];
+                i++;
+                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Logging in " + i + "/" + total + ": " + key.split('/')[0]}});
+                safeSendMessage({"method": "UpdateAccountsStatus"});
+                login(app, preset, key, next, true);
+            };
+            next();
+        });
+    }, "accounts_status", appId);
+}
+
+function logout_all_accounts(appId) {
+    getActiveApp(function(app, preset) {
+        chrome.cookies.getAll({"domain": preset.cookieDomain}, function(cookies_to_remove) {
+            removeAwsCookies(cookies_to_remove);
+            chrome.storage.local.get(["accounts"], function(result) {
+                const appAccounts = result.accounts && result.accounts[app.id];
+                if (!appAccounts) {
+                    chrome.storage.local.set({"accounts_status": {"status": "success", "message": "No accounts to log out of."}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    return;
+                }
+                let count = 0;
+                Object.keys(appAccounts).forEach(function(k) {
+                    if (appAccounts[k].status !== "expired") count++;
+                    appAccounts[k].status = "expired";
+                    delete appAccounts[k].cookies;
+                });
+                chrome.storage.local.set(result, function() {
+                    chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Logged out of " + count + " account" + (count === 1 ? "" : "s") + "."}});
+                    safeSendMessage({"method": "UpdateAccountsStatus"});
+                    safeSendMessage({"method": "UpdatePopup"});
+                });
+            });
+        });
+    }, "accounts_status", appId);
+}
+
 chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) {
     debugLog('Background received message:', request);
     
@@ -1138,6 +1207,12 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
     else if (request.method === "getAllAccounts") {
         get_all_accounts(request.appId);
     }
+    else if (request.method === "loginAllAccounts") {
+        login_all_accounts(request.appId);
+    }
+    else if (request.method === "logoutAllAccounts") {
+        logout_all_accounts(request.appId);
+    }
     else if (request.method === "loadOktaApps") {
         loadOktaApps();
     }
@@ -1148,10 +1223,11 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
             chrome.cookies.getAll({"domain": preset.cookieDomain}, function(cookies_to_remove) {
                 removeAwsCookies(cookies_to_remove);
 
-                // Update account status to expired
+                // Update account status to expired and drop its cached cookies.
                 chrome.storage.local.get(["accounts"], function(result) {
                     if (result.accounts && result.accounts[app.id] && result.accounts[app.id][request.account]) {
                         result.accounts[app.id][request.account].status = "expired";
+                        delete result.accounts[app.id][request.account].cookies;
                         chrome.storage.local.set(result, function() {
                             debugLog('Account expired and cookies cleared:', request.account);
                             safeSendMessage({"method": "UpdatePopup"});
