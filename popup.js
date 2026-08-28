@@ -142,7 +142,7 @@ function render_apps_list(settings) {
         item.appendChild(header);
 
         const urlInput = elt("input", "text_setting_value");
-        urlInput.placeholder = "https://company.okta.com/home/amazon_aws/...";
+        urlInput.placeholder = "Optional — auto-detected from Okta";
         urlInput.spellcheck = false;
         urlInput.value = app.url || "";
         urlInput.addEventListener("focusout", () => save_app_field(app.id, "url", urlInput.value));

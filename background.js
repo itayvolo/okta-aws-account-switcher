@@ -104,31 +104,17 @@ function getActiveApp(cb, statusKey = "accounts_status", preferredId = null) {
 }
 
 // Auto-detect AWS app from Okta apps list
-function autoDetectAwsApp(okta_data) {
-    debugLog("Auto-detecting AWS app from Okta apps data");
-    debugLog("Okta data type:", typeof okta_data, Array.isArray(okta_data) ? "array" : "not array");
+// Pull the AWS apps out of an Okta "home/tabs" API response, normalized to
+// { label, url }. Handles both the flat `apps` shape and the expanded
+// `items[].resource` shape.
+function extractAwsApps(okta_data) {
+    if (!okta_data) return [];
 
-    if (!okta_data) {
-        debugLog("Invalid Okta apps data - null or undefined");
-        chrome.storage.local.set({
-            "login_status": {
-                "status": "failed",
-                "message": "Failed to load Okta apps"
-            }
-        });
-        safeSendMessage({"method": "UpdateLoginStatus"});
-        return;
-    }
-
-    // Handle different response structures from Okta API
     let allApps = [];
-
     const collectFromTab = tab => {
         if (Array.isArray(tab.apps)) {
             allApps = allApps.concat(tab.apps);
         }
-        // Expanded format from ?expand=items,items.resource: each tab has `items`,
-        // and each item has the app metadata under `.resource`.
         if (Array.isArray(tab.items)) {
             tab.items.forEach(it => allApps.push(it.resource || it));
         }
@@ -146,84 +132,90 @@ function autoDetectAwsApp(okta_data) {
         collectFromTab(okta_data);
     }
 
-    debugLog("Total apps found:", allApps.length);
-    if (allApps.length > 0) {
-        debugLog("Sample app structure:", JSON.stringify(allApps[0]).substring(0, 200));
-    } else {
-        // Log the raw data structure for debugging
-        debugLog("No apps extracted. Raw data structure:", JSON.stringify(okta_data).substring(0, 500));
-    }
+    return allApps.filter(app => {
+        const label = (app.label || app.name || "").toLowerCase();
+        const url = (app.linkUrl || app.href || "").toLowerCase();
+        return label.includes("aws") || label.includes("amazon") ||
+               url.includes("amazon.com") || url.includes("aws.amazon");
+    }).map(app => ({
+        label: app.label || app.name || "",
+        url: app.linkUrl || app.href || ""
+    })).filter(a => a.url);
+}
 
-    // If no apps found, try to show a helpful message but still mark as success (logged in)
-    if (allApps.length === 0) {
-        debugLog("No apps could be extracted from Okta response");
+// Fetch the AWS apps for the signed-in Okta user directly from the service
+// worker (session cookies are sent with credentials:'include'). Returns the
+// normalized app list, or null if the request could not be made/parsed.
+function fetchOktaAwsApps(okta_domain, cb) {
+    const url = "https://" + okta_domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
+    fetch(url, { method: 'GET', credentials: 'include', headers: { 'Accept': 'application/json' } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => cb(data ? extractAwsApps(data) : null))
+        .catch(() => cb(null));
+}
+
+// Choose which detected Okta AWS app corresponds to a stored app entry.
+// Region narrows the pool (GovCloud vs commercial); label disambiguates the
+// rest. Returns null when the choice is genuinely ambiguous.
+function pickAppMatch(app, awsApps) {
+    if (!awsApps || awsApps.length === 0) return null;
+
+    const isGov = u => /us-gov|govcloud/i.test(u || "");
+    const wantGov = app.region === "govcloud";
+    let pool = awsApps.filter(a => isGov(a.url) === wantGov);
+    if (pool.length === 0) pool = awsApps.slice();
+    if (pool.length === 1) return pool[0];
+
+    const want = (app.label || "").trim().toLowerCase();
+    if (want) {
+        const exact = pool.find(a => a.label.trim().toLowerCase() === want);
+        if (exact) return exact;
+        const partial = pool.filter(a => {
+            const l = a.label.toLowerCase();
+            return l.includes(want) || want.includes(l);
+        });
+        if (partial.length === 1) return partial[0];
+    }
+    return null;
+}
+
+function autoDetectAwsApp(okta_data) {
+    debugLog("Auto-detecting AWS app from Okta apps data");
+
+    if (!okta_data) {
         chrome.storage.local.set({
-            "login_status": {
-                "status": "success",
-                "message": "Logged in! No apps found - use Get Accounts."
-            }
+            "login_status": { "status": "failed", "message": "Failed to load Okta apps" }
         });
         safeSendMessage({"method": "UpdateLoginStatus"});
         return;
     }
 
-    // Look for AWS-related apps
-    // Match by label containing "AWS" or "Amazon" (case insensitive)
-    // Or by linkUrl containing "amazon" or "aws"
-    const awsApps = allApps.filter(app => {
-        const label = (app.label || app.name || "").toLowerCase();
-        const url = (app.linkUrl || app.href || "").toLowerCase();
+    const awsApps = extractAwsApps(okta_data);
+    debugLog("AWS apps detected:", awsApps.length);
 
-        const isAwsApp = label.includes("aws") ||
-                         label.includes("amazon") ||
-                         url.includes("amazon.com") ||
-                         url.includes("aws.amazon");
-
-        if (isAwsApp) {
-            debugLog("Found potential AWS app:", app.label || app.name, app.linkUrl || app.href);
-        }
-
-        return isAwsApp;
-    });
-
-    if (awsApps.length > 0) {
-        debugLog("AWS apps detected:", awsApps.length);
-
-        chrome.storage.local.get(["settings"], function(result) {
-            if (result.settings === undefined) {
-                result.settings = {};
-            }
-
-            awsApps.forEach(app => {
-                const url = app.linkUrl || app.href;
-                if (!url) return;
-                upsertAwsAppInSettings(result.settings, {
-                    label: app.label || app.name,
-                    url: url
-                });
-            });
-
-            chrome.storage.local.set(result, function() {
-                debugLog("AWS apps merged into settings:", result.settings.aws_apps);
-
-                chrome.storage.local.set({
-                    "login_status": {
-                        "status": "success",
-                        "message": "Logged in! Loading accounts..."
-                    }
-                });
-                safeSendMessage({"method": "UpdateLoginStatus"});
-                safeSendMessage({"method": "UpdatePopup"});
-
-                // Auto-trigger account loading after AWS app is saved
-                setTimeout(() => get_all_accounts(), 500);
-            });
-        });
-    } else {
-        // No AWS app found in API response, try dashboard detection
+    if (awsApps.length === 0) {
+        // No AWS app in the API response; fall back to dashboard detection.
         debugLog("No AWS app found in Okta API response, trying dashboard detection...");
         handlePostLoginAccountLoad();
+        return;
     }
+
+    chrome.storage.local.get(["settings"], function(result) {
+        if (result.settings === undefined) {
+            result.settings = {};
+        }
+        awsApps.forEach(app => upsertAwsAppInSettings(result.settings, { label: app.label, url: app.url }));
+
+        chrome.storage.local.set(result, function() {
+            debugLog("AWS apps merged into settings:", result.settings.aws_apps);
+            chrome.storage.local.set({
+                "login_status": { "status": "success", "message": "Logged in! Loading accounts..." }
+            });
+            safeSendMessage({"method": "UpdateLoginStatus"});
+            safeSendMessage({"method": "UpdatePopup"});
+            setTimeout(() => get_all_accounts(), 500);
+        });
+    });
 }
 
 // Helper function to handle post-login account loading
@@ -1314,11 +1306,31 @@ function aws_login(app, preset, callback) {
                 return;
             }
             if (!app.url) {
-                // No URL to federate against. Do NOT re-launch okta_login here:
-                // auto-detection adds new apps by URL and never fills this one, so
-                // retrying just loops the Okta tab open/closed. Fail with guidance.
-                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "This AWS app has no URL. Set it in Settings, or use Login to auto-detect."}});
+                // No URL stored: resolve it on demand from the Okta apps list and
+                // cache it, then retry. We never re-launch okta_login here (that
+                // caused an open/close loop) — a plain fetch either finds the URL
+                // or we report a clear, terminal message.
+                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Finding the AWS app in Okta..."}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
+                fetchOktaAwsApps(storage.settings.okta_domain, function(awsApps) {
+                    if (awsApps === null) {
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Couldn't reach Okta to find the AWS app. Use Login, then try again."}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
+                        return;
+                    }
+                    const match = pickAppMatch(app, awsApps);
+                    if (!match) {
+                        const msg = awsApps.length === 0
+                            ? "No AWS app found in your Okta org."
+                            : "Found several AWS apps and can't tell which one this is. Rename this tab to match the Okta app, or set its URL in Settings.";
+                        chrome.storage.local.set({"accounts_status": {"status": "failed", "message": msg}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
+                        return;
+                    }
+                    persistAppFields(app.id, { url: match.url }, function(updatedApp, updatedPreset) {
+                        aws_login(updatedApp || Object.assign({}, app, { url: match.url }), updatedPreset || preset, callback);
+                    });
+                });
                 return;
             }
             var aws_saml_url = app.url;
