@@ -230,7 +230,9 @@ function autoDetectAwsApp(okta_data) {
 function handlePostLoginAccountLoad() {
     chrome.action.setBadgeText({text: ""});
     chrome.storage.local.get(["settings"], function(result) {
-        if (result.settings && Array.isArray(result.settings.aws_apps) && result.settings.aws_apps.length > 0) {
+        const apps = (result.settings && Array.isArray(result.settings.aws_apps)) ? result.settings.aws_apps : [];
+        const usableApp = apps.find(a => a && a.url);
+        if (usableApp) {
             chrome.storage.local.set({
                 "login_status": {
                     "status": "success",
@@ -238,7 +240,19 @@ function handlePostLoginAccountLoad() {
                 }
             });
             safeSendMessage({"method": "UpdateLoginStatus"});
-            setTimeout(() => get_all_accounts(), 500);
+            // Load the app that actually has a URL (the active one may be a
+            // blank manual entry) so we never fall into the no-URL retry loop.
+            setTimeout(() => get_all_accounts(usableApp.id), 500);
+        } else if (apps.length > 0) {
+            // Apps exist but none has a URL. Don't loop trying to detect — the
+            // user needs to fill it in (or auto-detection found nothing).
+            chrome.storage.local.set({
+                "login_status": {
+                    "status": "success",
+                    "message": "Logged in! Set the AWS App URL in Settings."
+                }
+            });
+            safeSendMessage({"method": "UpdateLoginStatus"});
         } else {
             // Try to detect AWS app from Okta dashboard
             debugLog("No AWS app configured, attempting to detect from dashboard...");
@@ -1300,9 +1314,11 @@ function aws_login(app, preset, callback) {
                 return;
             }
             if (!app.url) {
-                chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Detecting AWS app via Okta login..."}});
+                // No URL to federate against. Do NOT re-launch okta_login here:
+                // auto-detection adds new apps by URL and never fills this one, so
+                // retrying just loops the Okta tab open/closed. Fail with guidance.
+                chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "This AWS app has no URL. Set it in Settings, or use Login to auto-detect."}});
                 safeSendMessage({"method": "UpdateAccountsStatus"});
-                okta_login(() => {}, null);
                 return;
             }
             var aws_saml_url = app.url;
