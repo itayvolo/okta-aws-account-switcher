@@ -1449,13 +1449,11 @@ function aws_login(app, preset, callback) {
 // established, startManualLoginMonitoring detects it and loads the apps.
 function okta_login(callback, callback_argument = null) {
     chrome.storage.local.get(["settings"], function(storage){
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Opening Okta sign-in..."}});
-        safeSendMessage({"method": "UpdateLoginStatus"});
-
         chrome.action.setBadgeText({text: "..."});
         chrome.action.setBadgeBackgroundColor({color: "#2196F3"});
 
         if (storage.settings === undefined || storage.settings.okta_domain === undefined) {
+            chrome.action.setBadgeText({text: ""});
             chrome.storage.local.set({"login_status": {"status": "failed", "message": "Login failed! OKTA domain not set"}});
             safeSendMessage({"method": "UpdateLoginStatus"});
             return;
@@ -1463,33 +1461,50 @@ function okta_login(callback, callback_argument = null) {
 
         var domain = storage.settings.okta_domain;
         const okta_url = "https://" + domain + "/";
+        const list_apps_url = "https://" + domain + "/api/v1/users/me/home/tabs?type=all&expand=items%2Citems.resource";
 
-        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Sign in to Okta in the opened tab..."}});
+        chrome.storage.local.set({"login_status": {"status": "progress", "message": "Checking Okta session..."}});
         safeSendMessage({"method": "UpdateLoginStatus"});
 
-        // Open (or focus) the Okta tab in the FOREGROUND so the user can sign in.
-        chrome.tabs.query({url: "*://" + domain + "/*"}, function(existingTabs) {
-            checkLastError('tabs.query okta domain');
-            if (existingTabs && existingTabs.length > 0) {
-                chrome.tabs.update(existingTabs[0].id, {url: okta_url, active: true}, function(tab) {
-                    if (checkLastError('tabs.update okta') || !tab) {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to open Okta tab"}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        return;
-                    }
-                    startManualLoginMonitoring(tab.id, callback, callback_argument);
-                });
-            } else {
-                chrome.tabs.create({"url": okta_url, "active": true}, function(tab) {
-                    if (checkLastError('tabs.create okta') || !tab) {
-                        chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to open Okta tab"}});
-                        safeSendMessage({"method": "UpdateLoginStatus"});
-                        return;
-                    }
-                    startManualLoginMonitoring(tab.id, callback, callback_argument);
-                });
-            }
-        });
+        // If the Okta session is still valid, load everything with a silent
+        // background request — no tab is opened and the popup keeps focus.
+        // Only when the session has expired do we open Okta for manual sign-in.
+        fetch(list_apps_url, { method: 'GET', credentials: 'include', headers: { 'Accept': 'application/json' } })
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error("okta session invalid"))))
+            .then(data => {
+                chrome.action.setBadgeText({text: ""});
+                chrome.storage.local.set({"login_status": {"status": "success", "message": "Signed in! Loading applications..."}});
+                safeSendMessage({"method": "UpdateLoginStatus"});
+                autoDetectAwsApp(data);
+                if (callback) callback(callback_argument);
+            })
+            .catch(() => openOktaTabForManualLogin());
+
+        function openOktaTabForManualLogin() {
+            chrome.storage.local.set({"login_status": {"status": "progress", "message": "Sign in to Okta in the opened tab..."}});
+            safeSendMessage({"method": "UpdateLoginStatus"});
+
+            const onTab = function(tab) {
+                if (checkLastError('open okta tab') || !tab) {
+                    chrome.action.setBadgeText({text: ""});
+                    chrome.storage.local.set({"login_status": {"status": "failed", "message": "Failed to open Okta tab"}});
+                    safeSendMessage({"method": "UpdateLoginStatus"});
+                    return;
+                }
+                startManualLoginMonitoring(tab.id, callback, callback_argument);
+            };
+
+            // Reuse an existing Okta tab if one is open, otherwise open one in
+            // the foreground so the user can complete sign-in.
+            chrome.tabs.query({url: "*://" + domain + "/*"}, function(existingTabs) {
+                checkLastError('tabs.query okta domain');
+                if (existingTabs && existingTabs.length > 0) {
+                    chrome.tabs.update(existingTabs[0].id, {url: okta_url, active: true}, onTab);
+                } else {
+                    chrome.tabs.create({"url": okta_url, "active": true}, onTab);
+                }
+            });
+        }
     });
 }
 
