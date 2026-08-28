@@ -110,37 +110,46 @@ function getActiveApp(cb, statusKey = "accounts_status", preferredId = null) {
 function extractAwsApps(okta_data) {
     if (!okta_data) return [];
 
-    let allApps = [];
-    const collectFromTab = tab => {
-        if (Array.isArray(tab.apps)) {
-            allApps = allApps.concat(tab.apps);
+    // Collect app objects regardless of how Okta shaped the response: apps can
+    // sit under tab.apps, tab.items[].resource, or the ?expand= embedded form
+    // (tab._embedded.items[]._embedded.resource). Walk the tree and grab any
+    // node that looks like an app tile.
+    const allApps = [];
+    const walk = node => {
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (!node || typeof node !== "object") return;
+
+        const items = node.items || (node._embedded && node._embedded.items);
+        const apps = node.apps;
+        if (Array.isArray(items) || Array.isArray(apps)) {
+            if (Array.isArray(apps)) apps.forEach(a => allApps.push(a));
+            if (Array.isArray(items)) {
+                items.forEach(it => allApps.push(it.resource || (it._embedded && it._embedded.resource) || it));
+            }
+            return;
         }
-        if (Array.isArray(tab.items)) {
-            tab.items.forEach(it => allApps.push(it.resource || it));
+        if (node.linkUrl || node.href || node.loginUrl || node.appName || node.label) {
+            allApps.push(node);
         }
     };
+    walk(okta_data);
 
-    if (Array.isArray(okta_data)) {
-        okta_data.forEach(item => {
-            if (Array.isArray(item.apps) || Array.isArray(item.items)) {
-                collectFromTab(item);
-            } else if (item.linkUrl || item.label) {
-                allApps.push(item);
-            }
-        });
-    } else if (okta_data && (Array.isArray(okta_data.apps) || Array.isArray(okta_data.items))) {
-        collectFromTab(okta_data);
-    }
+    const urlOf = app => app.linkUrl || app.href || app.loginUrl || "";
+    const isAws = app => {
+        const hay = [app.label, app.name, app.appName, urlOf(app)].filter(Boolean).join(" ").toLowerCase();
+        return hay.includes("amazon") || hay.includes("aws");
+    };
 
-    return allApps.filter(app => {
-        const label = (app.label || app.name || "").toLowerCase();
-        const url = (app.linkUrl || app.href || "").toLowerCase();
-        return label.includes("aws") || label.includes("amazon") ||
-               url.includes("amazon.com") || url.includes("aws.amazon");
-    }).map(app => ({
-        label: app.label || app.name || "",
-        url: app.linkUrl || app.href || ""
-    })).filter(a => a.url);
+    const seen = new Set();
+    const out = [];
+    allApps.forEach(app => {
+        if (!isAws(app)) return;
+        const url = urlOf(app);
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+        out.push({ label: app.label || app.name || app.appName || "AWS", url: url });
+    });
+    return out;
 }
 
 // Fetch the AWS apps for the signed-in Okta user directly from the service
