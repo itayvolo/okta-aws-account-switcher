@@ -218,9 +218,23 @@ function build_app_tab(app, items) {
     section.dataset.id = app.id;
 
     const header = elt("div", "collapsible-header");
+
+    const titleGroup = elt("div", "app_title_group");
     const title = elt("span", "collapsible-title");
     title.innerText = appDisplayName(app);
-    header.appendChild(title);
+    titleGroup.appendChild(title);
+
+    const refreshBtn = elt("button", "app_refresh_btn");
+    refreshBtn.type = "button";
+    refreshBtn.title = "Refresh accounts";
+    refreshBtn.setAttribute("aria-label", "Refresh accounts");
+    refreshBtn.appendChild(elt("i", "fas fa-sync-alt"));
+    refreshBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        trigger_get_accounts(app.id, refreshBtn);
+    });
+    titleGroup.appendChild(refreshBtn);
+    header.appendChild(titleGroup);
 
     const actions = elt("div", "app_tab_actions");
 
@@ -246,16 +260,6 @@ function build_app_tab(app, items) {
     });
     actions.appendChild(logoutAllBtn);
 
-    const refreshBtn = elt("button", "app_refresh_btn");
-    refreshBtn.type = "button";
-    refreshBtn.title = "Refresh accounts";
-    refreshBtn.setAttribute("aria-label", "Refresh accounts");
-    refreshBtn.appendChild(elt("i", "fas fa-sync-alt"));
-    refreshBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        trigger_get_accounts(app.id, refreshBtn);
-    });
-    actions.appendChild(refreshBtn);
     actions.appendChild(elt("i", "fas fa-chevron-down chevron"));
     header.appendChild(actions);
 

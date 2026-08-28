@@ -120,6 +120,12 @@ header {
     background: var(--surface-hover);
 }
 
+.app_title_group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .collapsible-title {
     font-size: 14px;
     font-weight: 600;
