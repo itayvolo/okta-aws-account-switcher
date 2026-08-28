@@ -214,6 +214,7 @@ function autoDetectAwsApp(okta_data) {
             result.settings = {};
         }
         awsApps.forEach(app => upsertAwsAppInSettings(result.settings, { label: app.label, url: app.url }));
+        pruneBlankApps(result.settings);
 
         chrome.storage.local.set(result, function() {
             debugLog("AWS apps merged into settings:", result.settings.aws_apps);

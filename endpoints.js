@@ -109,24 +109,63 @@ function migrateSettings(callback) {
     });
 }
 
+// The Okta app-instance id (e.g. 0oa1z6rb084Cd33lz1d8) embedded in a linkUrl
+// uniquely identifies an AWS app even if the surrounding URL differs.
+function appInstanceKey(url) {
+    const m = String(url || "").match(/\/(0o[0-9a-zA-Z]+)(?:[/?#]|$)/);
+    return m ? m[1] : null;
+}
+
 function upsertAwsAppInSettings(settings, app) {
     if (!Array.isArray(settings.aws_apps)) settings.aws_apps = [];
-    const existing = settings.aws_apps.find(a => a.url === app.url);
+    const apps = settings.aws_apps;
+    const key = appInstanceKey(app.url);
+
+    // Already present? Match by exact URL or by Okta app-instance id.
+    const existing = apps.find(a => a.url && (a.url === app.url || (key && appInstanceKey(a.url) === key)));
     if (existing) {
+        if (app.url) existing.url = app.url;
         if (app.label) existing.label = app.label;
     } else {
-        settings.aws_apps.push({
-            id: generateAppId(),
-            label: app.label || "AWS",
-            url: app.url,
-            flow_mode: app.flow_mode || "access_portal",
-            region: app.region || "commercial"
-        });
+        // Adopt a blank placeholder (no URL) instead of creating a duplicate:
+        // prefer one whose label matches, else the sole blank entry.
+        let target = app.label
+            ? apps.find(a => !a.url && a.label && a.label.toLowerCase() === String(app.label).toLowerCase())
+            : null;
+        if (!target) {
+            const blanks = apps.filter(a => !a.url);
+            if (blanks.length === 1) target = blanks[0];
+        }
+        if (target) {
+            target.url = app.url;
+            if (app.label) target.label = app.label;
+            if (!target.flow_mode) target.flow_mode = app.flow_mode || "access_portal";
+            if (!target.region) target.region = app.region || "commercial";
+        } else {
+            apps.push({
+                id: generateAppId(),
+                label: app.label || "AWS",
+                url: app.url,
+                flow_mode: app.flow_mode || "access_portal",
+                region: app.region || "commercial"
+            });
+        }
     }
-    if (!settings.active_aws_app_id && settings.aws_apps.length > 0) {
-        settings.active_aws_app_id = settings.aws_apps[0].id;
+    if (!settings.active_aws_app_id && apps.length > 0) {
+        settings.active_aws_app_id = apps[0].id;
     }
-    return settings.aws_apps;
+    return apps;
+}
+
+// Drop leftover blank placeholder apps once at least one real (URL-bearing)
+// app exists, so a detected app never leaves a stray empty tab behind.
+function pruneBlankApps(settings) {
+    if (!settings || !Array.isArray(settings.aws_apps)) return;
+    if (!settings.aws_apps.some(a => a.url)) return;
+    settings.aws_apps = settings.aws_apps.filter(a => a.url);
+    if (!settings.aws_apps.find(a => a.id === settings.active_aws_app_id)) {
+        settings.active_aws_app_id = settings.aws_apps[0] ? settings.aws_apps[0].id : null;
+    }
 }
 
 const EndpointUtils = {
@@ -136,6 +175,7 @@ const EndpointUtils = {
     generateAppId,
     migrateSettings,
     upsertAwsAppInSettings,
+    pruneBlankApps,
     SCHEMA_VERSION
 };
 
