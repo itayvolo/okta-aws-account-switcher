@@ -24,8 +24,10 @@
         "*://*.okta.com/*",
         "*://*.okta-emea.com/*",
         "*://*.oktapreview.com/*",
-        "*://*.sternum.cloud/*",
-        "http://*/*",
+        "*://*.signin.aws/*"
+    ],
+
+    "optional_host_permissions": [
         "https://*/*"
     ],
    

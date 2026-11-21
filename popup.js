@@ -606,7 +606,20 @@ function save_open_tab_pref(e) {
     });
 }
 
-function okta_login() {
+// Custom Okta domains (not *.okta.com etc.) need a runtime host grant.
+function ensure_okta_permission() {
+    const domain = (document.getElementById("okta_domain").value || "").trim();
+    if (!domain || /(^|\.)(okta|okta-emea|oktapreview)\.com$/.test(domain)) return Promise.resolve(true);
+    return chrome.permissions.request({ origins: ["https://" + domain + "/*"] }).catch(() => false);
+}
+
+async function okta_login() {
+    if (!(await ensure_okta_permission())) {
+        document.getElementById("login_status_div").style.display = "block";
+        document.getElementById("login_status").innerText = "Access to the Okta domain was not granted.";
+        document.getElementById("login_status").className = "red";
+        return;
+    }
     const status_div = document.getElementById("login_status_div");
     const status_span = document.getElementById("login_status");
     const login_button = document.querySelector("button#okta_login");
