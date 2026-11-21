@@ -1123,9 +1123,19 @@ function checkExpire(){
 
 function login_all_accounts(appId) {
     getActiveApp(function(app, preset) {
-        chrome.storage.local.get(["accounts"], function(result) {
+        chrome.storage.local.get(["accounts", "last_roles"], function(result) {
             const appAccounts = (result.accounts && result.accounts[app.id]) || {};
-            const expiredKeys = Object.keys(appAccounts).filter(k => appAccounts[k].status === "expired");
+            const lastRoles = (result.last_roles && result.last_roles[app.id]) || {};
+            // One login per account (its preferred role), skipping accounts with any role ready.
+            const byName = {};
+            Object.keys(appAccounts).forEach(k => {
+                const i = k.indexOf('/');
+                const name = k.slice(0, i);
+                (byName[name] = byName[name] || []).push({role: k.slice(i + 1), status: appAccounts[k].status});
+            });
+            const expiredKeys = Object.keys(byName)
+                .filter(n => !byName[n].some(r => r.status === "ready"))
+                .map(n => n + '/' + pickAccountRole(byName[n], lastRoles[n]));
             const total = expiredKeys.length;
             if (total === 0) {
                 chrome.storage.local.set({"accounts_status": {"status": "success", "message": "All accounts are already logged in."}});
@@ -1241,14 +1251,17 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
 
                 // Update account status to expired and drop its cached cookies.
                 chrome.storage.local.get(["accounts"], function(result) {
-                    if (result.accounts && result.accounts[app.id] && result.accounts[app.id][request.account]) {
-                        result.accounts[app.id][request.account].status = "expired";
-                        delete result.accounts[app.id][request.account].cookies;
-                        chrome.storage.local.set(result, function() {
-                            debugLog('Account expired and cookies cleared:', request.account);
-                            safeSendMessage({"method": "UpdatePopup"});
-                        });
-                    }
+                    const appAccounts = result.accounts && result.accounts[app.id];
+                    const keys = (request.accounts || [request.account]).filter(k => appAccounts && appAccounts[k]);
+                    if (!keys.length) return;
+                    keys.forEach(k => {
+                        appAccounts[k].status = "expired";
+                        delete appAccounts[k].cookies;
+                    });
+                    chrome.storage.local.set(result, function() {
+                        debugLog('Accounts expired and cookies cleared:', keys);
+                        safeSendMessage({"method": "UpdatePopup"});
+                    });
                 });
             });
         }, "accounts_status", request.appId);

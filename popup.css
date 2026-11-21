@@ -538,10 +538,12 @@ div.login_status span.green {
 
 .account {
     flex: 1;
+    min-width: 0;
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    padding: 16px 20px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px;
+    outline: none;
     cursor: pointer;
     transition: all 0.2s ease;
     position: relative;
@@ -661,67 +663,6 @@ div.login_status span.green {
 .menu_option.expire-option:hover {
     background: rgba(217, 119, 6, 0.1);
     color: var(--warning-color);
-}
-
-/* Account Info */
-#account_name_role {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 0;
-}
-
-#account_name {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 4px;
-}
-
-#account_role {
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 500;
-}
-
-#status_div {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-    margin-left: 16px;
-}
-
-#status {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-#status.red {
-    background: rgba(220, 38, 38, 0.1);
-    color: var(--danger-color);
-    border: 1px solid rgba(220, 38, 38, 0.2);
-}
-
-#status.green {
-    background: rgba(5, 150, 105, 0.1);
-    color: var(--success-color);
-    border: 1px solid rgba(5, 150, 105, 0.2);
-}
-
-#status_div div {
-    background: var(--surface);
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
-    font-size: 11px;
-    font-weight: 500;
 }
 
 /* Loading Overlay (per app tab) */
@@ -896,4 +837,110 @@ div.login_status span.green {
     border-radius: 50%;
     animation: spin 1s linear infinite;
     z-index: 10;
+}
+
+/* Search */
+#search_bar {
+    position: relative;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+}
+
+#search_bar i {
+    position: absolute;
+    left: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+#account_search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px 7px 30px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--surface);
+    outline: none;
+}
+
+#account_search:focus {
+    border-color: var(--primary-color);
+    background: var(--background);
+}
+
+/* One row per account, roles as chips */
+.row:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgb(37 99 235 / 0.2);
+}
+
+.account_top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.account_name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.account_id {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--text-secondary);
+}
+
+.role_chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.role_chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.role_chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border);
+}
+
+.role_chip.ready::before {
+    background: var(--success-color);
+}
+
+.role_chip:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.role_chip.selected {
+    border-color: var(--primary-color);
+    background: rgb(37 99 235 / 0.08);
+    color: var(--primary-color);
 }
