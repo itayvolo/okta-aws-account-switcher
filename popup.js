@@ -135,11 +135,15 @@ function render_apps_list(settings) {
         const header = elt("div", "aws_app_header");
 
         const labelInput = elt("input", "text_setting_value app_label_input");
-        labelInput.placeholder = "Label (e.g. Commercial, GovCloud)";
+        labelInput.placeholder = "Label";
         labelInput.spellcheck = false;
         labelInput.value = app.label || "";
         labelInput.addEventListener("focusout", () => save_app_field(app.id, "label", labelInput.value));
         header.appendChild(labelInput);
+
+        const badge = elt("span", "region_badge" + (app.region === "govcloud" ? " gov" : ""));
+        badge.innerText = app.region === "govcloud" ? "GovCloud" : "Commercial";
+        header.appendChild(badge);
 
         const del = elt("button", "app_delete");
         del.type = "button";
@@ -151,8 +155,8 @@ function render_apps_list(settings) {
 
         item.appendChild(header);
 
-        const urlInput = elt("input", "text_setting_value");
-        urlInput.placeholder = "Optional - auto-detected from Okta";
+        const urlInput = elt("input", "text_setting_value app_url_input");
+        urlInput.placeholder = "App URL (auto-detected)";
         urlInput.spellcheck = false;
         urlInput.value = app.url || "";
         urlInput.addEventListener("focusout", () => save_app_field(app.id, "url", urlInput.value));

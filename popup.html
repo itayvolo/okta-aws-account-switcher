@@ -20,26 +20,32 @@
 
     <!-- Settings View -->
     <div id="settings_view">
-      <span class="setting_name">OKTA Domain</span>
-      <input spellcheck="false" class="text_setting_value" id="okta_domain" placeholder="company.okta.com"/>
-      <span class="setting_name">AWS Apps <span class="setting_hint">(auto-detected on login)</span></span>
-      <div id="aws_apps_list"></div>
-      <button id="add_aws_app" type="button" class="secondary_btn">+ Add AWS App</button>
-      <label class="toggle_row" for="open_tab_on_switch">
-        <input type="checkbox" id="open_tab_on_switch" checked/>
-        <span>Open a new AWS tab when switching accounts</span>
-      </label>
-      <div class="login">
-        <button id="okta_login">
-          <span>Login</span>
-        </button>
-      </div>
-      <div class="login_status" id="login_status_div">
-        <span id="login_status"></span>
-      </div>
+      <section class="settings_card">
+        <div class="settings_card_title">Okta</div>
+        <div class="inline_row">
+          <input spellcheck="false" class="text_setting_value" id="okta_domain" placeholder="company.okta.com" aria-label="Okta domain"/>
+          <button id="okta_login" type="button"><span>Login</span></button>
+        </div>
+        <div class="login_status" id="login_status_div">
+          <span id="login_status"></span>
+        </div>
+      </section>
+
+      <section class="settings_card">
+        <div class="settings_card_title">AWS apps <span class="setting_hint">auto-detected on login</span></div>
+        <div id="aws_apps_list"></div>
+        <button id="add_aws_app" type="button" class="secondary_btn"><i class="fas fa-plus"></i> Add AWS app</button>
+      </section>
+
+      <section class="settings_card">
+        <div class="settings_card_title">Preferences</div>
+        <label class="toggle_row" for="open_tab_on_switch">
+          <span>Open a new AWS tab when switching</span>
+          <input type="checkbox" id="open_tab_on_switch" class="switch" checked/>
+        </label>
+      </section>
     </div>
 
-    <!-- Home View: one collapsible tab per configured AWS app (injected by popup.js) -->
     <div id="search_bar">
       <i class="fas fa-search"></i>
       <input id="account_search" type="search" spellcheck="false" autocomplete="off" placeholder="Search account name or id"/>

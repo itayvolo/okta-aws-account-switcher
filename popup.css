@@ -76,33 +76,6 @@ header {
     font-weight: 500;
 }
 
-/* Settings view (toggled by the gear button) */
-#settings_view {
-    display: none;
-    flex-direction: column;
-    padding: 16px 20px;
-    gap: 8px;
-}
-
-#settings_view.active {
-    display: flex;
-}
-
-.toggle_row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    margin-top: 4px;
-}
-
-.toggle_row input {
-    cursor: pointer;
-    margin: 0;
-}
-
 /* Collapsible Header */
 .collapsible-header {
     display: flex;
@@ -255,197 +228,6 @@ header {
     padding: 0;
     gap: 0;
     max-height: 700px;
-}
-
-/* Login Status */
-#login_status_div {
-    padding: 0;
-}
-
-.setting_name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 6px;
-    display: block;
-}
-
-.setting_hint {
-    font-size: 11px;
-    font-weight: 400;
-    color: var(--text-secondary);
-}
-
-.text_setting_value[readonly] {
-    background: var(--background);
-    color: var(--text-secondary);
-    cursor: default;
-}
-
-.text_setting_value[readonly]:focus {
-    border-color: var(--border);
-    box-shadow: none;
-}
-
-.text_setting_value {
-    width: 100%;
-    padding: 12px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-family: inherit;
-    transition: all 0.2s ease;
-    margin-bottom: 16px;
-    background: var(--background);
-    color: var(--text-primary);
-    box-sizing: border-box;
-}
-
-.text_setting_value:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.text_setting_value::placeholder {
-    color: var(--text-secondary);
-}
-
-/* Login Button */
-div.login {
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    margin-top: 8px;
-}
-
-button#okta_login {
-    background: var(--primary-color);
-    border: 1px solid var(--primary-color);
-    outline: none;
-    cursor: pointer;
-    padding: 12px 24px;
-    transition: all 0.2s ease;
-    color: white;
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-weight: 600;
-    min-width: 120px;
-    box-shadow: var(--shadow);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-button#okta_login:hover {
-    background: var(--primary-hover);
-    border-color: var(--primary-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-lg);
-}
-
-button#okta_login:disabled {
-    background: var(--secondary-color);
-    color: white;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: var(--shadow);
-}
-
-/* Login Status */
-div.login_status {
-    margin: 8px 0 0 0;
-    display: none;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    background: var(--surface);
-    border: 1px solid var(--border);
-}
-
-div.login_status span {
-    font-size: 14px;
-    font-weight: 500;
-}
-
-div.login_status span.red {
-    color: var(--danger-color);
-}
-
-div.login_status span.green {
-    color: var(--success-color);
-}
-
-/* AWS Apps editor (settings) */
-#aws_apps_list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.aws_app_item {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px;
-    background: var(--surface);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.aws_app_header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.aws_app_header .text_setting_value {
-    flex: 1;
-}
-
-.aws_app_item .text_setting_value {
-    margin-bottom: 0;
-}
-
-.app_delete {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-.app_delete:hover {
-    background: rgba(220, 38, 38, 0.1);
-    color: var(--danger-color);
-}
-
-.secondary_btn {
-    background: var(--surface);
-    border: 1px dashed var(--border);
-    color: var(--text-primary);
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    font-weight: 600;
-    padding: 10px 12px;
-    cursor: pointer;
-    width: 100%;
-    transition: all 0.15s ease;
-}
-
-.secondary_btn:hover {
-    border-color: var(--primary-color);
-    color: var(--primary-color);
-    background: var(--surface-hover);
 }
 
 /* Per-app account list (inside each app tab) */
@@ -742,4 +524,242 @@ div.login_status span.green {
     border-color: var(--primary-color);
     background: rgb(37 99 235 / 0.08);
     color: var(--primary-color);
+}
+
+/* Settings */
+#settings_view {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 16px 16px;
+    background: var(--surface);
+}
+
+#settings_view.active {
+    display: flex;
+}
+
+.settings_card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.settings_card_title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.setting_hint {
+    margin-left: 4px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.text_setting_value {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+}
+
+.text_setting_value:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgb(37 99 235 / 0.15);
+}
+
+.text_setting_value::placeholder {
+    color: var(--text-secondary);
+}
+
+.inline_row {
+    display: flex;
+    gap: 8px;
+}
+
+button#okta_login {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 72px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--primary-color);
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+button#okta_login:hover {
+    background: var(--primary-hover);
+}
+
+button#okta_login:disabled {
+    background: var(--secondary-color);
+    cursor: default;
+}
+
+div.login_status {
+    display: none;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+div.login_status span.red {
+    color: var(--danger-color);
+}
+
+div.login_status span.green {
+    color: var(--success-color);
+}
+
+#aws_apps_list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#aws_apps_list:empty {
+    display: none;
+}
+
+.aws_app_item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.aws_app_header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.app_label_input {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+}
+
+.app_url_input {
+    font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--text-secondary);
+}
+
+.region_badge {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgb(37 99 235 / 0.08);
+    color: var(--primary-color);
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.region_badge.gov {
+    background: rgb(217 119 6 / 0.1);
+    color: var(--warning-color);
+}
+
+.app_delete {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.app_delete:hover {
+    background: rgb(220 38 38 / 0.1);
+    color: var(--danger-color);
+}
+
+.secondary_btn {
+    align-self: flex-start;
+    padding: 4px 2px;
+    border: none;
+    background: none;
+    color: var(--primary-color);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.secondary_btn:hover {
+    text-decoration: underline;
+}
+
+.toggle_row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.switch {
+    appearance: none;
+    flex-shrink: 0;
+    position: relative;
+    width: 32px;
+    height: 18px;
+    margin: 0;
+    border-radius: 9px;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: var(--shadow);
+    transition: transform 0.15s ease;
+}
+
+.switch:checked {
+    background: var(--primary-color);
+}
+
+.switch:checked::after {
+    transform: translateX(14px);
+}
+
+.switch:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
 }
