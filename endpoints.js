@@ -168,6 +168,17 @@ function pruneBlankApps(settings) {
     }
 }
 
+// Role to use for an account: last used, else a ready one, else ReadOnly, else first.
+// roles: [{role, status}]
+function pickAccountRole(roles, lastRole) {
+    if (!roles.length) return null;
+    if (lastRole && roles.some(r => r.role === lastRole)) return lastRole;
+    const ready = roles.find(r => r.status === "ready");
+    if (ready) return ready.role;
+    const ro = roles.find(r => r.role === "ReadOnlyAccess");
+    return (ro || roles[0]).role;
+}
+
 const EndpointUtils = {
     REGION_PRESETS,
     presetForApp,

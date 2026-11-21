@@ -77,6 +77,8 @@ function showView(view) {
     const settings = view === "settings";
     settingsView.classList.toggle("active", settings);
     appTabs.style.display = settings ? "none" : "block";
+    document.getElementById("search_bar").style.display = settings ? "none" : "block";
+    if (!settings) document.getElementById("account_search").focus();
     homeBtn.classList.toggle("active", !settings);
     settingsBtn.classList.toggle("active", settings);
 }
@@ -91,9 +93,14 @@ function init_popup() {
 
     document.getElementById("add_aws_app").addEventListener("click", add_aws_app);
 
-    chrome.storage.local.get(["settings", "accounts"], async function(result) {
+    const search = document.getElementById("account_search");
+    search.addEventListener("input", () => apply_search(search.value));
+    search.addEventListener("keydown", search_keydown);
+
+    chrome.storage.local.get(["settings", "accounts", "last_roles"], async function(result) {
         const settings = result.settings || {};
         const accountsRoot = result.accounts || {};
+        lastRoles = result.last_roles || {};
 
         if (settings.okta_domain !== undefined) {
             document.getElementById("okta_domain").value = settings.okta_domain;
@@ -293,61 +300,152 @@ function build_app_tab(app, items) {
     return section;
 }
 
+const ROLE_LABELS = { AdministratorAccess: "Admin", PowerUserAccess: "Power", ReadOnlyAccess: "RO" };
+const ROLE_ORDER = ["AdministratorAccess", "PowerUserAccess", "ReadOnlyAccess"];
+let lastRoles = {};
+
+function roleRank(role) {
+    const i = ROLE_ORDER.indexOf(role);
+    return i === -1 ? ROLE_ORDER.length : i;
+}
+
+// Group "name/role" keys into one entry per account.
+function groupAccounts(items) {
+    const byName = {};
+    Object.keys(items).forEach(key => {
+        const i = key.indexOf('/');
+        const name = key.slice(0, i);
+        const acc = byName[name] = byName[name] || { name: name, id: "", roles: [] };
+        acc.id = acc.id || items[key].id || "";
+        acc.roles.push({ role: key.slice(i + 1), status: items[key].status, key: key });
+    });
+    Object.values(byName).forEach(a => a.roles.sort((x, y) =>
+        roleRank(x.role) - roleRank(y.role) || x.role.localeCompare(y.role)));
+    return Object.values(byName);
+}
+
 function render_app_accounts(listEl, items, app) {
     listEl.innerHTML = "";
-    const allKeys = Object.keys(items);
+    const appLast = lastRoles[app.id] || {};
 
-    for (let i = 0; i < allKeys.length; i++) {
+    groupAccounts(items).forEach(acc => {
         const row_div = elt('div', 'row');
+        row_div.dataset.search = (acc.name + " " + acc.id).toLowerCase();
 
         const account_div = elt('div', 'account');
-        account_div.id = allKeys[i];
+        account_div.tabIndex = 0;
         account_div.dataset.appId = app.id;
-        account_div.addEventListener("click", account_change);
+        account_div.dataset.name = acc.name;
+        account_div.addEventListener("click", () => switch_role(account_div));
+        account_div.addEventListener("keydown", row_keydown);
         row_div.appendChild(account_div);
 
-        const account_name_role_div = document.createElement('div');
-        account_name_role_div.id = "account_name_role";
-        account_div.appendChild(account_name_role_div);
+        const top = elt('div', 'account_top');
+        const name = elt('div', 'account_name');
+        name.innerText = acc.name;
+        top.appendChild(name);
+        const id = elt('div', 'account_id');
+        id.innerText = acc.id;
+        top.appendChild(id);
+        account_div.appendChild(top);
 
-        const account_name_div = document.createElement('div');
-        account_name_div.innerText = allKeys[i].split('/')[0];
-        account_name_div.id = "account_name";
-        account_name_role_div.appendChild(account_name_div);
+        const chips = elt('div', 'role_chips');
+        const selected = pickAccountRole(acc.roles, appLast[acc.name]);
+        acc.roles.forEach(r => {
+            const chip = elt('button', 'role_chip' + (r.status === "ready" ? " ready" : ""));
+            chip.type = "button";
+            chip.tabIndex = -1;
+            chip.dataset.role = r.role;
+            chip.title = r.role + " (" + r.status + ")";
+            chip.innerText = ROLE_LABELS[r.role] || r.role;
+            chip.classList.toggle("selected", r.role === selected);
+            chip.addEventListener("click", (e) => {
+                e.stopPropagation();
+                select_chip(account_div, chip);
+                switch_role(account_div);
+            });
+            chips.appendChild(chip);
+        });
+        account_div.appendChild(chips);
 
-        const account_role_div = document.createElement('div');
-        account_role_div.id = "account_role";
-        account_role_div.innerText = allKeys[i].split('/')[1];
-        account_name_role_div.appendChild(account_role_div);
-
-        const info_div = document.createElement('div');
-        info_div.id = "status_div";
-        account_div.appendChild(info_div);
-
-        const status = items[allKeys[i]].status;
-        const status_div = document.createElement('div');
-        status_div.id = "status";
-        status_div.innerText = status;
-        status_div.classList.add(status === "ready" ? "green" : "red");
-        info_div.appendChild(status_div);
-
-        const account_id_div = elt('div', 'status');
-        account_id_div.innerText = items[allKeys[i]].id;
-        info_div.appendChild(account_id_div);
-
-        if (status === "ready") {
+        const readyKeys = acc.roles.filter(r => r.status === "ready").map(r => r.key);
+        if (readyKeys.length) {
             const logoutBtn = elt("button", "account_logout_btn");
             logoutBtn.type = "button";
+            logoutBtn.tabIndex = -1;
             logoutBtn.title = "Log out of this account";
             logoutBtn.setAttribute("aria-label", "Log out of this account");
-            logoutBtn.dataset.account = allKeys[i];
-            logoutBtn.dataset.appId = app.id;
             logoutBtn.appendChild(elt("i", "fas fa-right-from-bracket"));
-            logoutBtn.addEventListener("click", logout_account);
+            logoutBtn.addEventListener("click", (e) => logout_account(e, app.id, readyKeys));
             row_div.appendChild(logoutBtn);
         }
 
         listEl.appendChild(row_div);
+    });
+}
+
+function select_chip(accountDiv, chip) {
+    accountDiv.querySelectorAll(".role_chip").forEach(c => c.classList.toggle("selected", c === chip));
+}
+
+// ---- Search + keyboard ------------------------------------------------
+
+function visibleRows() {
+    return Array.from(document.querySelectorAll("#app_tabs .account"))
+        .filter(a => a.offsetParent !== null && !a.closest(".collapsed"));
+}
+
+function apply_search(query) {
+    const q = query.trim().toLowerCase();
+    document.querySelectorAll("#app_tabs .row").forEach(row => {
+        row.style.display = !q || row.dataset.search.includes(q) ? "" : "none";
+    });
+    if (q) document.querySelectorAll("#app_tabs .collapsed").forEach(s => s.classList.remove("collapsed"));
+}
+
+function search_keydown(e) {
+    if (e.key === "ArrowDown" || e.key === "Enter") {
+        const rows = visibleRows();
+        if (!rows.length) return;
+        e.preventDefault();
+        if (e.key === "Enter" && rows.length === 1) switch_role(rows[0]);
+        else rows[0].focus();
+    } else if (e.key === "Escape" && e.target.value) {
+        e.preventDefault();
+        e.target.value = "";
+        apply_search("");
+    }
+}
+
+function row_keydown(e) {
+    const row = e.currentTarget;
+    const search = document.getElementById("account_search");
+    const chips = Array.from(row.querySelectorAll(".role_chip"));
+    const cur = chips.findIndex(c => c.classList.contains("selected"));
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const rows = visibleRows();
+        const i = rows.indexOf(row) + (e.key === "ArrowDown" ? 1 : -1);
+        if (i < 0) search.focus();
+        else if (rows[i]) rows[i].focus();
+    } else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && chips.length) {
+        e.preventDefault();
+        const n = (cur + (e.key === "ArrowRight" ? 1 : -1) + chips.length) % chips.length;
+        select_chip(row, chips[n]);
+    } else if (/^[1-9]$/.test(e.key) && chips[+e.key - 1]) {
+        e.preventDefault();
+        select_chip(row, chips[+e.key - 1]);
+    } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        switch_role(row);
+    } else if (e.key === "Escape") {
+        e.preventDefault();
+        search.value = "";
+        apply_search("");
+        search.focus();
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        search.focus(); // keep typing into the search box
     }
 }
 
@@ -377,25 +475,26 @@ function trigger_logout_all(appId, btn) {
     safeSendMessage({ "method": "logoutAllAccounts", "appId": appId });
 }
 
-function logout_account(e) {
+function logout_account(e, appId, keys) {
     e.stopPropagation();
-    const target = e.currentTarget;
-    const account = target.dataset.account;
-    const appId = target.dataset.appId;
-    if (!account) return;
-    target.disabled = true;
+    e.currentTarget.disabled = true;
     statusAppId = appId;
-    safeSendMessage({ "method": "expireAccount", "account": account, "appId": appId });
+    safeSendMessage({ "method": "expireAccount", "accounts": keys, "appId": appId });
 }
 
-function account_change(e) {
-    const target = e.currentTarget;
-    const account = target.id;
-    const appId = target.dataset.appId;
-    if (!account) return;
+function switch_role(accountDiv) {
+    const chip = accountDiv.querySelector(".role_chip.selected");
+    if (!chip) return;
+    const appId = accountDiv.dataset.appId;
+    const name = accountDiv.dataset.name;
+    const role = chip.dataset.role;
+
+    lastRoles[appId] = lastRoles[appId] || {};
+    lastRoles[appId][name] = role;
+    chrome.storage.local.set({ last_roles: lastRoles });
 
     statusAppId = appId;
-    safeSendMessage({ "method": "changeAccount", "account": account, "appId": appId })
+    safeSendMessage({ "method": "changeAccount", "account": name + "/" + role, "appId": appId })
         .catch(() => {
             alert('Failed to switch account. Please try again.');
         });
