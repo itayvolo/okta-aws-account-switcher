@@ -321,8 +321,7 @@ function build_app_tab(app, items) {
     dismiss.title = "Dismiss";
     dismiss.addEventListener("click", function() {
         chrome.storage.local.remove("accounts_status", function() {
-            load.classList.remove("error", "success");
-            load.style.display = "none";
+            load.classList.remove("show");
         });
     });
     load.appendChild(dismiss);
@@ -711,14 +710,14 @@ function update_accounts_status() {
         busyUntil = st === "progress" ? Date.now() + 90000 : 0;
         loadDiv.classList.toggle("error", st === "failed");
         loadDiv.classList.toggle("success", st === "success");
-        loadDiv.style.display = (st === "progress" || st === "failed" || st === "success") ? "flex" : "none";
+        loadDiv.classList.toggle("show", st === "progress" || st === "failed" || st === "success");
         if (st === "progress") {
             buttons.forEach(b => { b.classList.add('spinning'); b.disabled = true; });
         } else {
             resetButton();
         }
         if (st === "success") {
-            loadDiv._hide = setTimeout(() => { loadDiv.style.display = "none"; }, 2000);
+            loadDiv._hide = setTimeout(() => loadDiv.classList.remove("show"), 2000);
         }
     });
 }
