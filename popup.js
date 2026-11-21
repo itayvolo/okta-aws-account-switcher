@@ -411,6 +411,11 @@ function render_app_accounts(listEl, items, app) {
             });
         });
         meta.appendChild(id);
+        top.appendChild(meta);
+        account_div.appendChild(top);
+
+        // Right column: pin on top, logout below.
+        const actions = elt('div', 'row_actions');
         const pin = elt('button', 'account_pin' + (isPinned ? ' pinned' : ''));
         pin.type = "button";
         pin.tabIndex = -1;
@@ -421,9 +426,7 @@ function render_app_accounts(listEl, items, app) {
             e.stopPropagation();
             toggle_pin(app.id, acc.name);
         });
-        meta.appendChild(pin);
-        top.appendChild(meta);
-        account_div.appendChild(top);
+        actions.appendChild(pin);
 
         const chips = elt('div', 'role_chips');
         const selected = pickAccountRole(acc.roles, appLast[acc.name]);
@@ -456,8 +459,9 @@ function render_app_accounts(listEl, items, app) {
             logoutBtn.setAttribute("aria-label", "Log out of this account");
             logoutBtn.appendChild(elt("i", "fas fa-right-from-bracket"));
             logoutBtn.addEventListener("click", (e) => logout_account(e, app.id, readyKeys));
-            row_div.appendChild(logoutBtn);
+            actions.appendChild(logoutBtn);
         }
+        row_div.appendChild(actions);
 
         listEl.appendChild(row_div);
     });

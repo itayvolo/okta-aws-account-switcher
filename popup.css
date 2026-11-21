@@ -163,20 +163,51 @@ header {
     cursor: default;
 }
 
-.account_logout_btn {
+.row_actions {
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    width: 36px;
+    border-left: 1px solid var(--border);
+}
+
+.account_pin,
+.account_logout_btn {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    background: transparent;
+    padding: 0;
     border: none;
-    border-left: 1px solid var(--border);
-    border-radius: 0 var(--radius) var(--radius) 0;
+    background: transparent;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
+}
+
+.account_logout_btn {
+    border-top: 1px solid var(--border);
+    border-bottom-right-radius: var(--radius);
+}
+
+.account_pin {
+    border-top-right-radius: var(--radius);
+    opacity: 0.35;
+}
+
+.row:hover .account_pin,
+.account_pin.pinned {
+    opacity: 1;
+}
+
+.account_pin:hover {
+    background: var(--surface-hover);
+    color: var(--warning-color);
+}
+
+.account_pin.pinned {
+    color: var(--warning-color);
 }
 
 .account_logout_btn:hover {
@@ -444,9 +475,7 @@ header {
     gap: 4px;
 }
 
-.account_id,
-.account_pin {
-    padding: 0;
+.account_id {
     border: none;
     background: none;
     color: var(--text-secondary);
@@ -481,22 +510,6 @@ header {
 .account_id.copied i {
     color: var(--success-color);
     opacity: 1;
-}
-
-.account_pin {
-    font-size: 11px;
-    visibility: hidden;
-}
-
-.row:hover .account_pin,
-.row:focus-within .account_pin,
-.account_pin.pinned {
-    visibility: visible;
-}
-
-.account_pin:hover,
-.account_pin.pinned {
-    color: var(--warning-color);
 }
 
 .role_chips {
