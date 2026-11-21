@@ -70,19 +70,13 @@ A Chrome extension that allows you to easily switch between AWS accounts without
 
 ## 🎯 Usage
 
-### Switching AWS Accounts
-1. **Get Accounts**: Click to retrieve available AWS accounts from your selected Okta app
-2. **Select Account**: Click on any account to switch to it
-3. **Account Status**: Green = active, Red = expired/inactive
-
-### Managing Accounts
-- **Delete Account**: Click the menu (⋮) next to an account → Delete
-- **Expire Account**: Manually expire an active account
-- **Delete All**: Remove all stored accounts
-
-### Refresh & Reset
-- **Refresh Button**: Reloads the entire extension (clears stuck states)
-- **F5 or Ctrl+Shift+R**: Keyboard shortcuts for refresh
+- **Open**: click the icon or press **Alt+Shift+A** (change it in `chrome://extensions/shortcuts`).
+- **Accounts**: one row per account; roles are chips (Admin / Power / RO). Green dot = logged in, amber = under 15 min left (hover for time left).
+- **Switch**: click a row (uses the last-used role) or a chip. **Cmd/Ctrl+click** or **Cmd/Ctrl+Enter** opens a new console tab.
+- **Search**: type to filter by account name or id.
+- **Keys**: ↑/↓ rows, ←/→ or 1–9 pick a role, Enter switch, Esc clear search.
+- **Pin**: ☆ on a row keeps it at the top. Click the account id to copy it.
+- **⟳** refreshes the account list (removes accounts/roles you no longer have), **⚡** logs in to every account once, **⇥** logs out.
 
 ## 🔄 What's New in v5.1.0
 
