@@ -8,7 +8,7 @@ const DEBUG_MODE = false;
 // Debug logging helper - only logs when DEBUG_MODE is true
 function debugLog(...args) {
     if (DEBUG_MODE) {
-        console.log(...args);
+        console.log("[AWS Switcher]", ...args);
     }
 }
 
@@ -23,11 +23,6 @@ function checkLastError(context) {
 
 // Constants
 const KEEP_ALIVE_INTERVAL_MS = 20000;
-const LOGIN_MONITOR_INTERVAL_MS = 1000;
-const OAUTH2_MONITOR_INTERVAL_MS = 500;
-const LOGIN_TIMEOUT_MS = 30000;
-const OAUTH2_TIMEOUT_MS = 60000;
-const MANUAL_LOGIN_TIMEOUT_MS = 300000;
 const SESSION_EXPIRATION_HOURS = 9;
 const ALARM_DELAY_MINUTES = 1.0;
 const ALARM_PERIOD_MINUTES = 3.0;
@@ -58,7 +53,9 @@ function reloadConsoleTabs(preset) {
     });
 }
 
+// Ping storage periodically so the service worker isn't suspended mid-login.
 function startKeepAlive() {
+    if (keepAliveInterval) return;
     keepAliveInterval = setInterval(() => {
         chrome.storage.local.get(['_keepalive'], () => {
             // This will keep the service worker alive
@@ -66,12 +63,6 @@ function startKeepAlive() {
     }, KEEP_ALIVE_INTERVAL_MS); // Every 20 seconds
 }
 
-function stopKeepAlive() {
-    if (keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-        keepAliveInterval = null;
-    }
-}
 
 function persistAppFields(appId, fields, cb) {
     chrome.storage.local.get(["settings"], (s) => {
