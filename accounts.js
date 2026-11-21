@@ -4,8 +4,7 @@ function get_all_accounts(preferredId) {
     chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
     safeSendMessage({"method": "UpdateAccountsStatus"});
     getActiveApp(function(app, preset) {
-    aws_login(app, preset, function(tab_id, portalHost, app, preset){
-        chrome.storage.local.get(["settings"], settings_storage => {
+        aws_login(app, preset, function(tab_id, portalHost, app, preset){
             const flow_mode = app.flow_mode || "access_portal";
             const is_portal = flow_mode === "access_portal";
             const inject = is_portal
@@ -56,30 +55,20 @@ function get_all_accounts(preferredId) {
                         accounts_storage.accounts[app.id] = {};
                     }
                     const appAccounts = accounts_storage.accounts[app.id];
-                    if (settings_storage.settings === undefined) {settings_storage.settings = {}}
-                    if (settings_storage.settings.role_filters === undefined) {settings_storage.settings.role_filters = []}
-                    const role_filters = settings_storage.settings.role_filters;
                     // Drop accounts/roles the portal no longer lists.
                     if (parsed.length > 0) {
                         const listed = new Set(parsed.map(a => a.account_name));
                         Object.keys(appAccounts).forEach(k => { if (!listed.has(k)) delete appAccounts[k]; });
                     }
                     parsed.forEach(a => {
-                        if (role_filters.length > 0 && role_filters.indexOf(a.role) === -1) {
-                            if (appAccounts[a.account_name] !== undefined) {
-                                delete appAccounts[a.account_name];
-                            }
+                        if (appAccounts[a.account_name] === undefined) {
+                            appAccounts[a.account_name] = {"id": a.account_id, "status": "expired"};
                         } else {
-                            if (appAccounts[a.account_name] === undefined) {
-                                appAccounts[a.account_name] = {"id": a.account_id, "status": "expired"};
-                            } else {
-                                appAccounts[a.account_name].id = a.account_id;
-                            }
+                            appAccounts[a.account_name].id = a.account_id;
                         }
                     });
                     chrome.storage.local.set(accounts_storage);
                     chrome.tabs.remove(tab_id);
-                    chrome.storage.local.set({accountsstatus: "ready"})
                     chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Successfully retrieved the list of AWS accounts."}})
                     chrome.storage.local.remove("login_status", function() {
                         safeSendMessage({"method": "UpdatePopup"});
@@ -90,7 +79,6 @@ function get_all_accounts(preferredId) {
                 safeSendMessage({"method": "UpdateAccountsStatus"});
             });
         });
-    })
     }, "accounts_status", preferredId);
 }
 

@@ -178,22 +178,3 @@ function pickAccountRole(roles, lastRole) {
     const ro = roles.find(r => r.role === "ReadOnlyAccess");
     return (ro || roles[0]).role;
 }
-
-const EndpointUtils = {
-    REGION_PRESETS,
-    presetForApp,
-    cookieApex,
-    generateAppId,
-    migrateSettings,
-    upsertAwsAppInSettings,
-    pruneBlankApps,
-    SCHEMA_VERSION
-};
-
-if (typeof window !== 'undefined') {
-    window.EndpointUtils = EndpointUtils;
-}
-
-if (typeof self !== 'undefined' && typeof window === 'undefined') {
-    self.EndpointUtils = EndpointUtils;
-}

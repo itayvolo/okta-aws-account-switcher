@@ -206,20 +206,20 @@ function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
                     console_check_count++;
                     chrome.tabs.get(tab_id, function(tab) {
                         if (chrome.runtime.lastError) {
-                            console.log('[AWS Switcher] Tab error:', chrome.runtime.lastError.message);
+                            debugLog('Tab error:', chrome.runtime.lastError.message);
                             if (console_check_count > 30) {
-                                console.log('[AWS Switcher] Timeout waiting for console');
+                                debugLog('Timeout waiting for console');
                                 clearInterval(console_timer);
                             }
                             return;
                         }
                         const tab_url = tab.url;
-                        console.log('[AWS Switcher] Checking tab URL:', tab_url);
+                        debugLog('Checking tab URL:', tab_url);
                         const isGovConsole = tab_url && tab_url.includes(REGION_PRESETS.govcloud.consoleHost);
                         const isCommercialConsole = tab_url && tab_url.includes(REGION_PRESETS.commercial.consoleHost);
                         if (isGovConsole || isCommercialConsole) {
                             clearInterval(console_timer);
-                            console.log('[AWS Switcher] AWS console loaded:', tab_url);
+                            debugLog('AWS console loaded:', tab_url);
                             const detectedRegion = isGovConsole ? "govcloud" : "commercial";
                             persistAppFields(app.id, { region: detectedRegion }, function(updatedApp, updatedPreset) {
                                 const finalPreset = updatedPreset || preset;
@@ -239,7 +239,7 @@ function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
                                 }, 2000);
                             });
                         } else if (console_check_count > 30) {
-                            console.log('[AWS Switcher] Timeout waiting for console after 30 checks');
+                            debugLog('Timeout waiting for console after 30 checks');
                             clearInterval(console_timer);
                             chrome.storage.local.set({"accounts_status": {"status": "failed", "message": "Timeout waiting for AWS console"}});
                             safeSendMessage({"method": "UpdateAccountsStatus"});
@@ -502,12 +502,12 @@ function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
                 },
                 args: [account_id, account_name, account_role]
             }).then((results) => {
-                console.log('[AWS Switcher] Account selection script executed');
+                debugLog('Account selection script executed');
                 const result = results[0].result;
-                console.log('[AWS Switcher] Script result:', JSON.stringify(result));
+                debugLog('Script result:', JSON.stringify(result));
 
                 if (result && result.status === 'page_not_ready') {
-                    console.log('[AWS Switcher] Page not ready, will retry selection after page loads');
+                    debugLog('Page not ready, will retry selection after page loads');
                     return;
                 }
 
@@ -528,7 +528,7 @@ function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
                 }
 
                 if (result && result.status === 'signin_button_not_found') {
-                    console.log('[AWS Switcher] Sign-in button not found but account was selected, continuing...');
+                    debugLog('Sign-in button not found but account was selected, continuing...');
                 }
 
                 startWaitConsole();
@@ -648,7 +648,7 @@ function save(login, callback, originalAccountKey, appId, preset){
                     appAccounts[originalAccountKey].id = extractedId;
                 }
 
-                console.log('[AWS Switcher] save() updating existing account:', originalAccountKey, 'to status: ready');
+                debugLog('save() updating existing account:', originalAccountKey, 'to status: ready');
 
                 // Combine both updates into a single storage set to avoid race conditions
                 const updateData = {
@@ -657,7 +657,7 @@ function save(login, callback, originalAccountKey, appId, preset){
                 };
 
                 chrome.storage.local.set(updateData, function(){
-                    console.log('[AWS Switcher] save() completed successfully for:', originalAccountKey);
+                    debugLog('save() completed successfully for:', originalAccountKey);
                     safeSendMessage({"method": "UpdateAccountsStatus"});
                     safeSendMessage({"method": "UpdatePopup"});
                     callback();
