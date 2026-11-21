@@ -2,6 +2,8 @@ window.addEventListener("load", load_popup);
 
 // Tracks which app tab a pending accounts_status update belongs to.
 let statusAppId = null;
+// Set while a switch/login runs; blocks starting another (expires in case status never updates).
+let busyUntil = 0;
 
 function wakeUpServiceWorker() {
     return new Promise((resolve) => {
@@ -309,10 +311,11 @@ function build_app_tab(app, items) {
     load.appendChild(elt("span", "app_load_span"));
     const dismiss = elt("button", "app_load_dismiss");
     dismiss.type = "button";
-    dismiss.innerText = "Dismiss";
+    dismiss.innerText = "\u00d7";
+    dismiss.title = "Dismiss";
     dismiss.addEventListener("click", function() {
         chrome.storage.local.remove("accounts_status", function() {
-            load.classList.remove("error");
+            load.classList.remove("error", "success");
             load.style.display = "none";
         });
     });
@@ -554,7 +557,7 @@ function toggle_pin(appId, name) {
 
 function switch_role(accountDiv, newTab) {
     const chip = accountDiv.querySelector(".role_chip.selected");
-    if (!chip) return;
+    if (!chip || Date.now() < busyUntil) return;
     const appId = accountDiv.dataset.appId;
     const name = accountDiv.dataset.name;
     const role = chip.dataset.role;
@@ -691,25 +694,19 @@ function update_accounts_status() {
             });
         };
 
-        if (storage.accounts_status.status === "success") {
-            loadDiv.style.display = "none";
-            loadDiv.classList.remove("error");
-            resetButton();
-        }
-        else if (storage.accounts_status.status === "failed") {
-            loadDiv.style.display = "flex";
-            loadDiv.classList.add("error");
-            resetButton();
-        }
-        else if (storage.accounts_status.status === "progress") {
-            loadDiv.style.display = "flex";
-            loadDiv.classList.remove("error");
+        const st = storage.accounts_status.status;
+        clearTimeout(loadDiv._hide);
+        busyUntil = st === "progress" ? Date.now() + 90000 : 0;
+        loadDiv.classList.toggle("error", st === "failed");
+        loadDiv.classList.toggle("success", st === "success");
+        loadDiv.style.display = (st === "progress" || st === "failed" || st === "success") ? "flex" : "none";
+        if (st === "progress") {
             buttons.forEach(b => { b.classList.add('spinning'); b.disabled = true; });
-        }
-        else {
-            loadDiv.style.display = "none";
-            loadDiv.classList.remove("error");
+        } else {
             resetButton();
+        }
+        if (st === "success") {
+            loadDiv._hide = setTimeout(() => { loadDiv.style.display = "none"; }, 2000);
         }
     });
 }
