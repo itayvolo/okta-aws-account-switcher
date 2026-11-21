@@ -155,6 +155,7 @@ function logout_all_accounts(appId) {
                     delete appAccounts[k].cookies;
                 });
                 chrome.storage.local.set(result, function() {
+                    reloadConsoleTabs(preset);
                     chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Logged out of " + count + " account" + (count === 1 ? "" : "s") + "."}});
                     safeSendMessage({"method": "UpdateAccountsStatus"});
                     safeSendMessage({"method": "UpdatePopup"});
