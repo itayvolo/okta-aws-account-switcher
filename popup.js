@@ -97,10 +97,11 @@ function init_popup() {
     search.addEventListener("input", () => apply_search(search.value));
     search.addEventListener("keydown", search_keydown);
 
-    chrome.storage.local.get(["settings", "accounts", "last_roles"], async function(result) {
+    chrome.storage.local.get(["settings", "accounts", "last_roles", "pinned_accounts"], async function(result) {
         const settings = result.settings || {};
         const accountsRoot = result.accounts || {};
         lastRoles = result.last_roles || {};
+        pinned = result.pinned_accounts || {};
 
         if (settings.okta_domain !== undefined) {
             document.getElementById("okta_domain").value = settings.okta_domain;
@@ -205,6 +206,32 @@ function delete_aws_app(id) {
 
 // ---- Per-app account tabs ---------------------------------------------
 
+// Redraw from storage, keeping search, collapsed tabs and focus.
+function rerender() {
+    const focused = document.activeElement && document.activeElement.closest(".account");
+    const focusKey = focused ? focused.dataset.appId + "\n" + focused.dataset.name : null;
+    const collapsed = Array.from(document.querySelectorAll(".app_tab.collapsed")).map(s => s.dataset.id);
+
+    chrome.storage.local.get(["settings", "accounts", "last_roles", "pinned_accounts"], function(result) {
+        const settings = result.settings || {};
+        lastRoles = result.last_roles || {};
+        pinned = result.pinned_accounts || {};
+        render_apps_list(settings);
+        render_app_tabs(settings, result.accounts || {});
+        collapsed.forEach(id => {
+            const s = document.querySelector('.app_tab[data-id="' + id + '"]');
+            if (s) s.classList.add("collapsed");
+        });
+        apply_search(document.getElementById("account_search").value);
+        if (focusKey) {
+            const a = Array.from(document.querySelectorAll("#app_tabs .account"))
+                .find(x => x.dataset.appId + "\n" + x.dataset.name === focusKey);
+            if (a) a.focus();
+        }
+        update_accounts_status();
+    });
+}
+
 function refresh_tabs() {
     chrome.storage.local.get(["settings", "accounts"], function(result) {
         render_app_tabs(result.settings || {}, result.accounts || {});
@@ -303,6 +330,7 @@ function build_app_tab(app, items) {
 const ROLE_LABELS = { AdministratorAccess: "Admin", PowerUserAccess: "Power", ReadOnlyAccess: "RO" };
 const ROLE_ORDER = ["AdministratorAccess", "PowerUserAccess", "ReadOnlyAccess"];
 let lastRoles = {};
+let pinned = {};
 
 function roleRank(role) {
     const i = ROLE_ORDER.indexOf(role);
@@ -324,11 +352,20 @@ function groupAccounts(items) {
     return Object.values(byName);
 }
 
+function minutesLeft(expSec) {
+    const min = Math.floor((expSec * 1000 - Date.now()) / 60000);
+    return min > 0 ? min : null;
+}
+
 function render_app_accounts(listEl, items, app) {
     listEl.innerHTML = "";
     const appLast = lastRoles[app.id] || {};
+    const appPinned = pinned[app.id] || [];
+    const accounts = groupAccounts(items).sort((a, b) =>
+        appPinned.includes(b.name) - appPinned.includes(a.name) || a.name.localeCompare(b.name));
 
-    groupAccounts(items).forEach(acc => {
+    accounts.forEach(acc => {
+        const isPinned = appPinned.includes(acc.name);
         const row_div = elt('div', 'row');
         row_div.dataset.search = (acc.name + " " + acc.id).toLowerCase();
 
@@ -336,7 +373,7 @@ function render_app_accounts(listEl, items, app) {
         account_div.tabIndex = 0;
         account_div.dataset.appId = app.id;
         account_div.dataset.name = acc.name;
-        account_div.addEventListener("click", () => switch_role(account_div));
+        account_div.addEventListener("click", (e) => switch_role(account_div, e.metaKey || e.ctrlKey));
         account_div.addEventListener("keydown", row_keydown);
         row_div.appendChild(account_div);
 
@@ -344,9 +381,32 @@ function render_app_accounts(listEl, items, app) {
         const name = elt('div', 'account_name');
         name.innerText = acc.name;
         top.appendChild(name);
-        const id = elt('div', 'account_id');
+        const meta = elt('div', 'account_meta');
+        const id = elt('button', 'account_id');
+        id.type = "button";
+        id.tabIndex = -1;
+        id.title = "Copy account id";
         id.innerText = acc.id;
-        top.appendChild(id);
+        id.addEventListener("click", (e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(acc.id).then(() => {
+                id.innerText = "Copied";
+                setTimeout(() => { id.innerText = acc.id; }, 1000);
+            });
+        });
+        meta.appendChild(id);
+        const pin = elt('button', 'account_pin' + (isPinned ? ' pinned' : ''));
+        pin.type = "button";
+        pin.tabIndex = -1;
+        pin.title = isPinned ? "Unpin" : "Pin to top";
+        pin.setAttribute("aria-label", pin.title);
+        pin.appendChild(elt('i', (isPinned ? 'fas' : 'far') + ' fa-star'));
+        pin.addEventListener("click", (e) => {
+            e.stopPropagation();
+            toggle_pin(app.id, acc.name);
+        });
+        meta.appendChild(pin);
+        top.appendChild(meta);
         account_div.appendChild(top);
 
         const chips = elt('div', 'role_chips');
@@ -356,13 +416,16 @@ function render_app_accounts(listEl, items, app) {
             chip.type = "button";
             chip.tabIndex = -1;
             chip.dataset.role = r.role;
-            chip.title = r.role + " (" + r.status + ")";
+            const min = r.status === "ready" ? minutesLeft(items[r.key].expirationDate) : null;
+            const left = min && (min >= 60 ? Math.floor(min / 60) + "h " + (min % 60) + "m" : min + "m");
+            chip.title = r.role + (left ? " - " + left + " left" : " (" + r.status + ")");
+            if (min && min < 15) chip.classList.add("expiring");
             chip.innerText = ROLE_LABELS[r.role] || r.role;
             chip.classList.toggle("selected", r.role === selected);
             chip.addEventListener("click", (e) => {
                 e.stopPropagation();
                 select_chip(account_div, chip);
-                switch_role(account_div);
+                switch_role(account_div, e.metaKey || e.ctrlKey);
             });
             chips.appendChild(chip);
         });
@@ -408,7 +471,7 @@ function search_keydown(e) {
         const rows = visibleRows();
         if (!rows.length) return;
         e.preventDefault();
-        if (e.key === "Enter" && rows.length === 1) switch_role(rows[0]);
+        if (e.key === "Enter" && rows.length === 1) switch_role(rows[0], e.metaKey || e.ctrlKey);
         else rows[0].focus();
     } else if (e.key === "Escape" && e.target.value) {
         e.preventDefault();
@@ -438,7 +501,7 @@ function row_keydown(e) {
         select_chip(row, chips[+e.key - 1]);
     } else if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        switch_role(row);
+        switch_role(row, e.metaKey || e.ctrlKey);
     } else if (e.key === "Escape") {
         e.preventDefault();
         search.value = "";
@@ -482,7 +545,14 @@ function logout_account(e, appId, keys) {
     safeSendMessage({ "method": "expireAccount", "accounts": keys, "appId": appId });
 }
 
-function switch_role(accountDiv) {
+function toggle_pin(appId, name) {
+    const list = pinned[appId] = pinned[appId] || [];
+    const i = list.indexOf(name);
+    if (i === -1) list.push(name); else list.splice(i, 1);
+    chrome.storage.local.set({ pinned_accounts: pinned }, rerender);
+}
+
+function switch_role(accountDiv, newTab) {
     const chip = accountDiv.querySelector(".role_chip.selected");
     if (!chip) return;
     const appId = accountDiv.dataset.appId;
@@ -494,7 +564,7 @@ function switch_role(accountDiv) {
     chrome.storage.local.set({ last_roles: lastRoles });
 
     statusAppId = appId;
-    safeSendMessage({ "method": "changeAccount", "account": name + "/" + role, "appId": appId })
+    safeSendMessage({ "method": "changeAccount", "account": name + "/" + role, "appId": appId, "newTab": !!newTab })
         .catch(() => {
             alert('Failed to switch account. Please try again.');
         });
@@ -502,7 +572,7 @@ function switch_role(accountDiv) {
 
 chrome.runtime.onMessage.addListener(function(request, _sender, _sendResponse) {
     if (request.method === "UpdatePopup") {
-        location.reload();
+        rerender();
     }
     else if (request.method === "UpdateLoginStatus") {
         update_login_status();

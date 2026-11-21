@@ -477,6 +477,11 @@ function get_all_accounts(preferredId) {
                     if (settings_storage.settings === undefined) {settings_storage.settings = {}}
                     if (settings_storage.settings.role_filters === undefined) {settings_storage.settings.role_filters = []}
                     const role_filters = settings_storage.settings.role_filters;
+                    // Drop accounts/roles the portal no longer lists.
+                    if (parsed.length > 0) {
+                        const listed = new Set(parsed.map(a => a.account_name));
+                        Object.keys(appAccounts).forEach(k => { if (!listed.has(k)) delete appAccounts[k]; });
+                    }
                     parsed.forEach(a => {
                         if (role_filters.length > 0 && role_filters.indexOf(a.role) === -1) {
                             if (appAccounts[a.account_name] !== undefined) {
@@ -507,7 +512,7 @@ function get_all_accounts(preferredId) {
     }, "accounts_status", preferredId);
 }
 
-function change_account(app, preset, account){
+function change_account(app, preset, account, newTab){
     debugLog('change_account called for:', account);
     debugLog('Switching to account:', account);
     chrome.cookies.getAll({"domain": preset.cookieDomain}, function(cookies_to_remove) {
@@ -525,28 +530,28 @@ function change_account(app, preset, account){
                 cookie_to_add.url = "https://" + domain + cookie_to_add.path;
                 chrome.cookies.set(cookie_to_add);
             }
-            refresh_all_aws_tabs(preset);
+            refresh_all_aws_tabs(preset, newTab);
         });
     });
 }
 
-function refresh_all_aws_tabs(preset) {
+// newTab: also open a fresh console tab even if one is open.
+function refresh_all_aws_tabs(preset, newTab) {
     preset = preset || REGION_PRESETS.commercial;
     chrome.storage.local.get(["settings"], function(s) {
         // Default ON: open a fresh console tab when none is open. When OFF we
         // only reload an already-open console tab and never pop a new one.
         const openNewTab = !(s.settings && s.settings.open_tab_on_switch === false);
         chrome.tabs.query({"url": "*://*." + preset.consoleHost + "/*"}, tabs => {
-            if (tabs.length > 0) {
-                for (let i = 0; i < tabs.length; i++) {
-                    chrome.tabs.reload(tabs[i].id);
-                }
-            } else if (openNewTab) {
+            for (let i = 0; i < tabs.length; i++) {
+                chrome.tabs.reload(tabs[i].id);
+            }
+            if (newTab || (tabs.length === 0 && openNewTab)) {
                 chrome.tabs.create({"url": preset.consoleCreateUrl});
             }
             chrome.storage.local.set({"accounts_status": {"status": "success", "message": "🎉 Account changed successfully!"}})
             safeSendMessage({"method": "UpdateAccountsStatus"});
-            if (tabs.length > 0) {
+            if (tabs.length > 0 && !newTab) {
                 chrome.tabs.query({ active: true, currentWindow: true }, active_tabs => {
                     if (active_tabs[0] != undefined) {
                         if (!active_tabs[0].url.includes(preset.consoleHost)) {
@@ -728,7 +733,7 @@ function save(login, callback, originalAccountKey, appId, preset){
     });
 }
 
-function login(app, preset, account, callback, alwaysCloseTab) {
+function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
     debugLog('login called for account:', account);
     chrome.storage.local.get(["accounts"], function(storage){
         chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
@@ -785,8 +790,8 @@ function login(app, preset, account, callback, alwaysCloseTab) {
                                         // cookies. When "open new tab" is off, close it so
                                         // switching an expired account leaves no new tab.
                                         chrome.storage.local.get(["settings"], function(s) {
-                                            const keepTab = alwaysCloseTab ? false : !(s.settings && s.settings.open_tab_on_switch === false);
-                                            if (!keepTab) {
+                                            const keep = alwaysCloseTab ? false : (keepTab || !(s.settings && s.settings.open_tab_on_switch === false));
+                                            if (!keep) {
                                                 chrome.tabs.remove(tab_id, function(){ checkLastError('close federation tab'); });
                                             }
                                             callback();
@@ -1196,7 +1201,8 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
     
     if (request.method === "changeAccount") {
         debugLog('Processing changeAccount for:', request.account, 'app:', request.appId);
-        chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Retrieving list of AWS accounts..."}})
+        const [accName, accRole] = [request.account.slice(0, request.account.indexOf('/')), request.account.slice(request.account.indexOf('/') + 1)];
+        chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Switching to " + accName + " (" + accRole + ")..."}})
         safeSendMessage({"method": "UpdateAccountsStatus"});
         getActiveApp(function(app, preset) {
             chrome.storage.local.get(["accounts"], function(result){
@@ -1219,10 +1225,10 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
 
                 if (accountData.status === "expired") {
                     debugLog('Account is expired, attempting login...');
-                    login(app, preset, request.account, () => getActiveApp((a, p) => refresh_all_aws_tabs(p)));
+                    login(app, preset, request.account, () => getActiveApp((a, p) => refresh_all_aws_tabs(p)), false, request.newTab);
                 } else {
                     debugLog('Account is ready, changing account...');
-                    change_account(app, preset, request.account);
+                    change_account(app, preset, request.account, request.newTab);
                 }
             });
         }, "accounts_status", request.appId);
