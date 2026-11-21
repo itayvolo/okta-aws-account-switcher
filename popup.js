@@ -86,6 +86,8 @@ function showView(view) {
 }
 
 function init_popup() {
+    // Version of the code Chrome actually loaded (stale until the extension is reloaded).
+    document.getElementById("version-info").innerText = "v" + chrome.runtime.getManifest().version;
     document.getElementById('nav_home').addEventListener("click", () => showView("home"));
     document.getElementById('nav_settings').addEventListener("click", () => showView("settings"));
     document.getElementById('okta_login').addEventListener("click", okta_login);
