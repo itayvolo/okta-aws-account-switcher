@@ -2,7 +2,7 @@
     "manifest_version": 3,
    
     "name": "Okta - AWS Account Switcher",
-    "version": "5.6.1",
+    "version": "5.6.2",
     "description": "The tool to switch AWS account without login",
 
     "permissions": [

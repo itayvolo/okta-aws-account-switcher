@@ -275,10 +275,10 @@ function build_app_tab(app, items) {
         e.stopPropagation();
         trigger_get_accounts(app.id, refreshBtn);
     });
-    titleGroup.appendChild(refreshBtn);
     header.appendChild(titleGroup);
 
     const actions = elt("div", "app_tab_actions");
+    actions.appendChild(refreshBtn);
 
     const loginAllBtn = elt("button", "app_login_all_btn");
     loginAllBtn.type = "button";
@@ -321,8 +321,7 @@ function build_app_tab(app, items) {
     dismiss.title = "Dismiss";
     dismiss.addEventListener("click", function() {
         chrome.storage.local.remove("accounts_status", function() {
-            load.classList.remove("error", "success");
-            load.style.display = "none";
+            load.classList.remove("show");
         });
     });
     load.appendChild(dismiss);
@@ -536,15 +535,8 @@ function row_keydown(e) {
 
 function trigger_get_accounts(appId, btn) {
     statusAppId = appId;
-    btn.classList.add('spinning');
     btn.disabled = true;
-
     safeSendMessage({ "method": "getAllAccounts", "appId": appId });
-
-    setTimeout(() => {
-        btn.classList.remove('spinning');
-        btn.disabled = false;
-    }, 10000);
 }
 
 function trigger_login_all(appId, btn) {
@@ -718,14 +710,14 @@ function update_accounts_status() {
         busyUntil = st === "progress" ? Date.now() + 90000 : 0;
         loadDiv.classList.toggle("error", st === "failed");
         loadDiv.classList.toggle("success", st === "success");
-        loadDiv.style.display = (st === "progress" || st === "failed" || st === "success") ? "flex" : "none";
+        loadDiv.classList.toggle("show", st === "progress" || st === "failed" || st === "success");
         if (st === "progress") {
             buttons.forEach(b => { b.classList.add('spinning'); b.disabled = true; });
         } else {
             resetButton();
         }
         if (st === "success") {
-            loadDiv._hide = setTimeout(() => { loadDiv.style.display = "none"; }, 2000);
+            loadDiv._hide = setTimeout(() => loadDiv.classList.remove("show"), 2000);
         }
     });
 }

@@ -149,10 +149,6 @@ header {
     color: var(--danger-color);
 }
 
-.app_refresh_btn.spinning i {
-    animation: spin 0.8s linear infinite;
-}
-
 .app_login_all_btn.spinning i {
     animation: pulse 1s ease-in-out infinite;
 }
@@ -312,12 +308,24 @@ header {
     position: sticky;
     top: 0;
     z-index: 10;
-    display: none;
+    display: flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 16px;
+    max-height: 0;
+    padding: 0 16px;
+    overflow: hidden;
+    opacity: 0;
     background: rgb(37 99 235 / 0.08);
-    border-bottom: 1px solid rgb(37 99 235 / 0.2);
+    border-bottom: 0 solid rgb(37 99 235 / 0.2);
+    transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.2s ease,
+                background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.app_load.show {
+    max-height: 80px;
+    padding: 7px 16px;
+    opacity: 1;
+    border-bottom-width: 1px;
 }
 
 .app_load span {
@@ -795,4 +803,30 @@ div.login_status span.green {
 .switch:focus-visible {
     outline: 2px solid var(--primary-color);
     outline-offset: 2px;
+}
+
+/* Press feedback and smooth state changes */
+button,
+.account {
+    transition: transform 0.08s ease, background-color 0.15s ease, color 0.15s ease,
+                border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+button:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.account:active {
+    transform: scale(0.99);
+}
+
+.role_chip::before {
+    transition: background-color 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition: none !important;
+        animation-duration: 0.01ms !important;
+    }
 }
