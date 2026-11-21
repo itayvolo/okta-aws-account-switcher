@@ -29,8 +29,6 @@ const ALARM_PERIOD_MINUTES = 3.0;
 
 let keepAliveInterval;
 
-// Helper function to get decrypted password from storage
-
 // Helper function to remove AWS cookies
 function removeAwsCookies(cookies, skipNoflush = true) {
     cookies.forEach(cookie => {

@@ -584,7 +584,7 @@ function save(login, callback, originalAccountKey, appId, preset){
                         const payload = JSON.parse(atob(jwtParts[1]));
 
                         if (payload.sub) {
-                            // Extract from ARN format like: "arn:aws:iam::015428540659:user/route53"
+                            // Extract from ARN format like: "arn:aws:iam::123456789012:user/example"
                             const arnMatch = payload.sub.match(/arn:aws(?:-us-gov|-cn)?:iam::([0-9]+):(?:user|assumed-role)\/(.+?)(?:\/|$)/);
                             if (arnMatch) {
                                 account_id = arnMatch[1];
