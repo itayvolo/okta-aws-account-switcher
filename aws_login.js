@@ -175,7 +175,7 @@ function aws_login(app, preset, callback) {
 function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
     debugLog('login called for account:', account);
     chrome.storage.local.get(["accounts"], function(storage){
-        chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Performing AWS account login"}});
+        chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Logging in to " + account.replace("/", " (") + ")..."}});
         safeSendMessage({"method": "UpdateAccountsStatus"});
         const appAccounts = (storage.accounts && storage.accounts[app.id]) || undefined;
         if (appAccounts === undefined) {
@@ -195,7 +195,7 @@ function login(app, preset, account, callback, alwaysCloseTab, keepTab) {
 
         aws_login(app, preset, function(tab_id, portalHost, app, preset){
             debugLog('aws_login callback called with tab_id:', tab_id, 'portalHost:', portalHost);
-            chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Selecting account..."}});
+            chrome.storage.local.set({"accounts_status": {"status": "progress", "message": "Selecting " + account.replace("/", " (") + ")..."}});
             safeSendMessage({"method": "UpdateAccountsStatus"});
 
             const startWaitConsole = () => {

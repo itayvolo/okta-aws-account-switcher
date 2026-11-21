@@ -51,6 +51,13 @@ function removeAwsCookies(cookies, skipNoflush = true) {
     });
 }
 
+// Reload open console tabs so they reflect a logout right away.
+function reloadConsoleTabs(preset) {
+    chrome.tabs.query({"url": "*://*." + preset.consoleHost + "/*"}, tabs => {
+        tabs.forEach(t => chrome.tabs.reload(t.id));
+    });
+}
+
 function startKeepAlive() {
     keepAliveInterval = setInterval(() => {
         chrome.storage.local.get(['_keepalive'], () => {
@@ -215,6 +222,10 @@ chrome.runtime.onMessage.addListener( function(request, _sender, _sendResponse) 
                     });
                     chrome.storage.local.set(result, function() {
                         debugLog('Accounts expired and cookies cleared:', keys);
+                        reloadConsoleTabs(preset);
+                        const name = keys[0].slice(0, keys[0].indexOf('/'));
+                        chrome.storage.local.set({"accounts_status": {"status": "success", "message": "Logged out of " + name + "."}});
+                        safeSendMessage({"method": "UpdateAccountsStatus"});
                         safeSendMessage({"method": "UpdatePopup"});
                     });
                 });

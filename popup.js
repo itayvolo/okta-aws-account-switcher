@@ -2,6 +2,8 @@ window.addEventListener("load", load_popup);
 
 // Tracks which app tab a pending accounts_status update belongs to.
 let statusAppId = null;
+// Set while a switch/login runs; blocks starting another (expires in case status never updates).
+let busyUntil = 0;
 
 function wakeUpServiceWorker() {
     return new Promise((resolve) => {
@@ -133,11 +135,15 @@ function render_apps_list(settings) {
         const header = elt("div", "aws_app_header");
 
         const labelInput = elt("input", "text_setting_value app_label_input");
-        labelInput.placeholder = "Label (e.g. Commercial, GovCloud)";
+        labelInput.placeholder = "Label";
         labelInput.spellcheck = false;
         labelInput.value = app.label || "";
         labelInput.addEventListener("focusout", () => save_app_field(app.id, "label", labelInput.value));
         header.appendChild(labelInput);
+
+        const badge = elt("span", "region_badge" + (app.region === "govcloud" ? " gov" : ""));
+        badge.innerText = app.region === "govcloud" ? "GovCloud" : "Commercial";
+        header.appendChild(badge);
 
         const del = elt("button", "app_delete");
         del.type = "button";
@@ -149,8 +155,8 @@ function render_apps_list(settings) {
 
         item.appendChild(header);
 
-        const urlInput = elt("input", "text_setting_value");
-        urlInput.placeholder = "Optional - auto-detected from Okta";
+        const urlInput = elt("input", "text_setting_value app_url_input");
+        urlInput.placeholder = "App URL (auto-detected)";
         urlInput.spellcheck = false;
         urlInput.value = app.url || "";
         urlInput.addEventListener("focusout", () => save_app_field(app.id, "url", urlInput.value));
@@ -309,10 +315,11 @@ function build_app_tab(app, items) {
     load.appendChild(elt("span", "app_load_span"));
     const dismiss = elt("button", "app_load_dismiss");
     dismiss.type = "button";
-    dismiss.innerText = "Dismiss";
+    dismiss.innerText = "\u00d7";
+    dismiss.title = "Dismiss";
     dismiss.addEventListener("click", function() {
         chrome.storage.local.remove("accounts_status", function() {
-            load.classList.remove("error");
+            load.classList.remove("error", "success");
             load.style.display = "none";
         });
     });
@@ -386,15 +393,29 @@ function render_app_accounts(listEl, items, app) {
         id.type = "button";
         id.tabIndex = -1;
         id.title = "Copy account id";
-        id.innerText = acc.id;
+        const idText = elt('span');
+        idText.innerText = acc.id;
+        const idIcon = elt('i', 'far fa-copy');
+        id.append(idText, idIcon);
         id.addEventListener("click", (e) => {
             e.stopPropagation();
             navigator.clipboard.writeText(acc.id).then(() => {
-                id.innerText = "Copied";
-                setTimeout(() => { id.innerText = acc.id; }, 1000);
+                id.classList.add("copied");
+                idText.innerText = "Copied";
+                idIcon.className = "fas fa-check";
+                setTimeout(() => {
+                    id.classList.remove("copied");
+                    idText.innerText = acc.id;
+                    idIcon.className = "far fa-copy";
+                }, 1200);
             });
         });
         meta.appendChild(id);
+        top.appendChild(meta);
+        account_div.appendChild(top);
+
+        // Right column: pin on top, logout below.
+        const actions = elt('div', 'row_actions');
         const pin = elt('button', 'account_pin' + (isPinned ? ' pinned' : ''));
         pin.type = "button";
         pin.tabIndex = -1;
@@ -405,9 +426,7 @@ function render_app_accounts(listEl, items, app) {
             e.stopPropagation();
             toggle_pin(app.id, acc.name);
         });
-        meta.appendChild(pin);
-        top.appendChild(meta);
-        account_div.appendChild(top);
+        actions.appendChild(pin);
 
         const chips = elt('div', 'role_chips');
         const selected = pickAccountRole(acc.roles, appLast[acc.name]);
@@ -440,8 +459,9 @@ function render_app_accounts(listEl, items, app) {
             logoutBtn.setAttribute("aria-label", "Log out of this account");
             logoutBtn.appendChild(elt("i", "fas fa-right-from-bracket"));
             logoutBtn.addEventListener("click", (e) => logout_account(e, app.id, readyKeys));
-            row_div.appendChild(logoutBtn);
+            actions.appendChild(logoutBtn);
         }
+        row_div.appendChild(actions);
 
         listEl.appendChild(row_div);
     });
@@ -554,7 +574,7 @@ function toggle_pin(appId, name) {
 
 function switch_role(accountDiv, newTab) {
     const chip = accountDiv.querySelector(".role_chip.selected");
-    if (!chip) return;
+    if (!chip || Date.now() < busyUntil) return;
     const appId = accountDiv.dataset.appId;
     const name = accountDiv.dataset.name;
     const role = chip.dataset.role;
@@ -691,25 +711,19 @@ function update_accounts_status() {
             });
         };
 
-        if (storage.accounts_status.status === "success") {
-            loadDiv.style.display = "none";
-            loadDiv.classList.remove("error");
-            resetButton();
-        }
-        else if (storage.accounts_status.status === "failed") {
-            loadDiv.style.display = "flex";
-            loadDiv.classList.add("error");
-            resetButton();
-        }
-        else if (storage.accounts_status.status === "progress") {
-            loadDiv.style.display = "flex";
-            loadDiv.classList.remove("error");
+        const st = storage.accounts_status.status;
+        clearTimeout(loadDiv._hide);
+        busyUntil = st === "progress" ? Date.now() + 90000 : 0;
+        loadDiv.classList.toggle("error", st === "failed");
+        loadDiv.classList.toggle("success", st === "success");
+        loadDiv.style.display = (st === "progress" || st === "failed" || st === "success") ? "flex" : "none";
+        if (st === "progress") {
             buttons.forEach(b => { b.classList.add('spinning'); b.disabled = true; });
-        }
-        else {
-            loadDiv.style.display = "none";
-            loadDiv.classList.remove("error");
+        } else {
             resetButton();
+        }
+        if (st === "success") {
+            loadDiv._hide = setTimeout(() => { loadDiv.style.display = "none"; }, 2000);
         }
     });
 }
