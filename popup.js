@@ -393,12 +393,21 @@ function render_app_accounts(listEl, items, app) {
         id.type = "button";
         id.tabIndex = -1;
         id.title = "Copy account id";
-        id.innerText = acc.id;
+        const idText = elt('span');
+        idText.innerText = acc.id;
+        const idIcon = elt('i', 'far fa-copy');
+        id.append(idText, idIcon);
         id.addEventListener("click", (e) => {
             e.stopPropagation();
             navigator.clipboard.writeText(acc.id).then(() => {
-                id.innerText = "Copied";
-                setTimeout(() => { id.innerText = acc.id; }, 1000);
+                id.classList.add("copied");
+                idText.innerText = "Copied";
+                idIcon.className = "fas fa-check";
+                setTimeout(() => {
+                    id.classList.remove("copied");
+                    idText.innerText = acc.id;
+                    idIcon.className = "far fa-copy";
+                }, 1200);
             });
         });
         meta.appendChild(id);

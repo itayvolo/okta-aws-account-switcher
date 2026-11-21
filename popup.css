@@ -454,13 +454,33 @@ header {
 }
 
 .account_id {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
     font-size: 11px;
     font-family: ui-monospace, Menlo, monospace;
 }
 
+.account_id i {
+    font-size: 10px;
+    opacity: 0.45;
+}
+
 .account_id:hover {
-    color: var(--primary-color);
-    text-decoration: underline;
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.account_id:hover i {
+    opacity: 1;
+}
+
+.account_id.copied,
+.account_id.copied i {
+    color: var(--success-color);
+    opacity: 1;
 }
 
 .account_pin {
