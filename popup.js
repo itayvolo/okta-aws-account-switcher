@@ -88,6 +88,12 @@ function showView(view) {
 function init_popup() {
     // Version of the code Chrome actually loaded (stale until the extension is reloaded).
     document.getElementById("version-info").innerText = "v" + chrome.runtime.getManifest().version;
+    // Open links via the tabs API; target=_blank from an action popup is unreliable.
+    document.getElementById("credit_link").addEventListener("click", (e) => {
+        e.preventDefault();
+        chrome.tabs.create({ url: e.currentTarget.href });
+        window.close();
+    });
     document.getElementById('nav_home').addEventListener("click", () => showView("home"));
     document.getElementById('nav_settings').addEventListener("click", () => showView("settings"));
     document.getElementById('okta_login').addEventListener("click", okta_login);
