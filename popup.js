@@ -275,10 +275,10 @@ function build_app_tab(app, items) {
         e.stopPropagation();
         trigger_get_accounts(app.id, refreshBtn);
     });
-    titleGroup.appendChild(refreshBtn);
     header.appendChild(titleGroup);
 
     const actions = elt("div", "app_tab_actions");
+    actions.appendChild(refreshBtn);
 
     const loginAllBtn = elt("button", "app_login_all_btn");
     loginAllBtn.type = "button";
@@ -536,15 +536,8 @@ function row_keydown(e) {
 
 function trigger_get_accounts(appId, btn) {
     statusAppId = appId;
-    btn.classList.add('spinning');
     btn.disabled = true;
-
     safeSendMessage({ "method": "getAllAccounts", "appId": appId });
-
-    setTimeout(() => {
-        btn.classList.remove('spinning');
-        btn.disabled = false;
-    }, 10000);
 }
 
 function trigger_login_all(appId, btn) {
